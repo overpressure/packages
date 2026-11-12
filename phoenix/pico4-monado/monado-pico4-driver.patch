@@ -1,0 +1,359 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 41e822af0..38be1c7c2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -344,6 +344,7 @@ option_with_deps(XRT_BUILD_DRIVER_REMOTE "Enable remote debugging driver" DEPEND
+ option_with_deps(XRT_BUILD_DRIVER_RIFT "Enable Oculus Rift (DK2) device driver")
+ option_with_deps(XRT_BUILD_DRIVER_RIFT_S "Enable Oculus Rift S device driver" DEPENDS XRT_HAVE_V4L2)
+ option_with_deps(XRT_BUILD_DRIVER_ROKID "Enable Rokid driver" DEPENDS "XRT_HAVE_LIBUSB")
++option(XRT_BUILD_DRIVER_PICO4 "Enable PICO 4 driver (IMU through the Qualcomm Sensor Core)" OFF)
+ option_with_deps(XRT_BUILD_DRIVER_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" DEPENDS XRT_HAVE_LINUX XRT_MODULE_AUX_VIVE)
+ option_with_deps(XRT_BUILD_DRIVER_SURVIVE "Enable libsurvive driver" DEPENDS SURVIVE_FOUND XRT_MODULE_AUX_VIVE)
+ option_with_deps(XRT_BUILD_DRIVER_ULV2 "Enable Ultraleap v2 driver" DEPENDS LeapV2_FOUND)
+@@ -447,6 +448,7 @@ list(
+ 	"RIFT"
+ 	"RIFT_S"
+ 	"ROKID"
++	"PICO4"
+ 	"SURVIVE"
+ 	"V4L2"
+ 	"ULV2"
+@@ -687,6 +689,7 @@ message(STATUS "#    DRIVER_REMOTE:               ${XRT_BUILD_DRIVER_REMOTE}")
+ message(STATUS "#    DRIVER_RIFT:                 ${XRT_BUILD_DRIVER_RIFT}")
+ message(STATUS "#    DRIVER_RIFT_S:               ${XRT_BUILD_DRIVER_RIFT_S}")
+ message(STATUS "#    DRIVER_ROKID:                ${XRT_BUILD_DRIVER_ROKID}")
++message(STATUS "#    DRIVER_PICO4:                ${XRT_BUILD_DRIVER_PICO4}")
+ message(STATUS "#    DRIVER_SIMULATED:            ${XRT_BUILD_DRIVER_SIMULATED}")
+ message(STATUS "#    DRIVER_SIMULAVR:             ${XRT_BUILD_DRIVER_SIMULAVR}")
+ message(STATUS "#    DRIVER_SURVIVE:              ${XRT_BUILD_DRIVER_SURVIVE}")
+diff --git a/src/xrt/compositor/main/comp_renderer.c b/src/xrt/compositor/main/comp_renderer.c
+index 16c16fd7a..697491fee 100644
+--- a/src/xrt/compositor/main/comp_renderer.c
++++ b/src/xrt/compositor/main/comp_renderer.c
+@@ -589,7 +589,8 @@ renderer_init(struct comp_renderer *r, struct comp_compositor *c, VkExtent2D scr
+ 	    &c->nr,                     // struct render_resources
+ 	    c->nr.view_count,           // view_count
+ 	    scratch_extent,             // extent
+-	    VK_FORMAT_R8G8B8A8_SRGB);   // format
++	    VK_FORMAT_R8G8B8A8_SRGB,    // format
++	    c->settings.use_compute);   // storage
+ 	if (!bret) {
+ 		COMP_ERROR(c, "chl_scratch_ensure: false");
+ 		assert(bret && "Whelp, can't return a error. But should never really fail.");
+diff --git a/src/xrt/compositor/util/comp_high_level_scratch.c b/src/xrt/compositor/util/comp_high_level_scratch.c
+index d1ad4e755..2d9ba95e8 100644
+--- a/src/xrt/compositor/util/comp_high_level_scratch.c
++++ b/src/xrt/compositor/util/comp_high_level_scratch.c
+@@ -36,7 +36,8 @@ chl_scratch_ensure(struct chl_scratch *scratch,
+                    struct render_resources *rr,
+                    uint32_t view_count,
+                    VkExtent2D extent,
+-                   const VkFormat format)
++                   const VkFormat format,
++                   bool storage)
+ {
+ 	struct vk_bundle *vk = rr->vk;
+ 	bool bret = false;
+@@ -45,7 +46,8 @@ chl_scratch_ensure(struct chl_scratch *scratch,
+ 	if (scratch->view_count == view_count &&       //
+ 	    scratch->extent.width == extent.width &&   //
+ 	    scratch->extent.height == extent.height && //
+-	    scratch->format == format) {
++	    scratch->format == format &&               //
++	    scratch->storage == storage) {
+ 		return true;
+ 	}
+ 
+@@ -73,7 +75,8 @@ chl_scratch_ensure(struct chl_scratch *scratch,
+ 
+ 		if (format == VK_FORMAT_R8G8B8A8_SRGB) {
+ 			// Special creation function for the mutable format.
+-			bret = comp_scratch_single_images_ensure_mutable(cssi, vk, extent);
++			bret = storage ? comp_scratch_single_images_ensure_mutable(cssi, vk, extent)
++			               : comp_scratch_single_images_ensure_mutable_sampled(cssi, vk, extent);
+ 		} else {
+ 			bret = comp_scratch_single_images_ensure(cssi, vk, extent, format);
+ 		}
+@@ -113,6 +116,7 @@ chl_scratch_ensure(struct chl_scratch *scratch,
+ 	// Update the cached values.
+ 	scratch->extent = extent;
+ 	scratch->format = format;
++	scratch->storage = storage;
+ 
+ 	return true;
+ }
+diff --git a/src/xrt/compositor/util/comp_high_level_scratch.h b/src/xrt/compositor/util/comp_high_level_scratch.h
+index 12271721c..7dcaabd0a 100644
+--- a/src/xrt/compositor/util/comp_high_level_scratch.h
++++ b/src/xrt/compositor/util/comp_high_level_scratch.h
+@@ -51,6 +51,9 @@ struct chl_scratch
+ 	//! Format requested.
+ 	VkFormat format;
+ 
++	//! Whether the images can be written as storage images (compute path).
++	bool storage;
++
+ 	//! Has the render pass been initialized.
+ 	bool render_pass_initialized;
+ };
+@@ -83,7 +86,8 @@ chl_scratch_ensure(struct chl_scratch *scratch,
+                    struct render_resources *rr,
+                    uint32_t view_count,
+                    VkExtent2D extent,
+-                   const VkFormat format);
++                   const VkFormat format,
++                   bool storage);
+ 
+ /*!
+  * Free all Vulkan resources that this scratch has created.
+diff --git a/src/xrt/compositor/util/comp_scratch.c b/src/xrt/compositor/util/comp_scratch.c
+index 716be02f6..4e7e7061f 100644
+--- a/src/xrt/compositor/util/comp_scratch.c
++++ b/src/xrt/compositor/util/comp_scratch.c
+@@ -26,19 +26,31 @@
+  */
+ 
+ static inline void
+-fill_info(VkExtent2D extent, VkFormat srgb_format, VkFormat unorm_format, struct xrt_swapchain_create_info *out_info)
++fill_info(VkExtent2D extent,
++          VkFormat srgb_format,
++          VkFormat unorm_format,
++          bool storage,
++          struct xrt_swapchain_create_info *out_info)
+ {
+ 	// Must be true.
+ 	assert(unorm_format != VK_FORMAT_UNDEFINED);
+ 
+ 	enum xrt_swapchain_create_flags create = 0;
+ 
+-	enum xrt_swapchain_usage_bits bits =      //
+-	    XRT_SWAPCHAIN_USAGE_COLOR |           //
+-	    XRT_SWAPCHAIN_USAGE_SAMPLED |         //
+-	    XRT_SWAPCHAIN_USAGE_TRANSFER_SRC |    //
+-	    XRT_SWAPCHAIN_USAGE_TRANSFER_DST |    //
+-	    XRT_SWAPCHAIN_USAGE_UNORDERED_ACCESS; //
++	enum xrt_swapchain_usage_bits bits =   //
++	    XRT_SWAPCHAIN_USAGE_COLOR |        //
++	    XRT_SWAPCHAIN_USAGE_SAMPLED |      //
++	    XRT_SWAPCHAIN_USAGE_TRANSFER_SRC | //
++	    XRT_SWAPCHAIN_USAGE_TRANSFER_DST;  //
++
++	/*
++	 * Only the compute path writes scratch images as storage images. Some
++	 * GPUs (Adreno 6xx with Turnip) cannot compress storage images, which
++	 * doubles the memory traffic of the graphics path.
++	 */
++	if (storage) {
++		bits |= XRT_SWAPCHAIN_USAGE_UNORDERED_ACCESS;
++	}
+ 
+ 	struct xrt_swapchain_create_info info = {
+ 	    .create = create,
+@@ -171,8 +183,10 @@ tmp_init_and_create(struct tmp *t,
+ 	// Base info.
+ 	const VkImageViewType view_type = VK_IMAGE_VIEW_TYPE_2D;
+ 
+-	// Both usages are common.
+-	const VkImageUsageFlags unorm_usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
++	// Storage only when the images were created for it.
++	const VkImageUsageFlags unorm_usage =
++	    VK_IMAGE_USAGE_SAMPLED_BIT |
++	    ((info->bits & XRT_SWAPCHAIN_USAGE_UNORDERED_ACCESS) != 0 ? VK_IMAGE_USAGE_STORAGE_BIT : 0);
+ 
+ 	// Very few cards support SRGB storage.
+ 	const VkImageUsageFlags srgb_usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+@@ -276,18 +290,21 @@ ensure(struct comp_scratch_single_images *cssi,
+        struct vk_bundle *vk,
+        VkExtent2D extent,
+        const VkFormat srgb_format,
+-       const VkFormat unorm_format)
++       const VkFormat unorm_format,
++       bool storage)
+ {
++	bool has_storage = (cssi->info.bits & XRT_SWAPCHAIN_USAGE_UNORDERED_ACCESS) != 0;
+ 	if (cssi->info.width == extent.width &&      //
+ 	    cssi->info.height == extent.height &&    //
+ 	    cssi->info.formats[0] == unorm_format && //
+-	    cssi->info.formats[1] == srgb_format) {  //
++	    cssi->info.formats[1] == srgb_format &&  //
++	    has_storage == storage) {                //
+ 		// Our work here is done!
+ 		return true;
+ 	}
+ 
+ 	struct xrt_swapchain_create_info info = XRT_STRUCT_INIT;
+-	fill_info(extent, srgb_format, unorm_format, &info);
++	fill_info(extent, srgb_format, unorm_format, storage, &info);
+ 
+ 	struct tmp t; // Is initialized in function.
+ 	if (!tmp_init_and_create(&t, vk, &info, srgb_format, unorm_format)) {
+@@ -337,7 +354,7 @@ comp_scratch_single_images_ensure(struct comp_scratch_single_images *cssi,
+                                   VkExtent2D extent,
+                                   const VkFormat format)
+ {
+-	return ensure(cssi, vk, extent, VK_FORMAT_UNDEFINED, format);
++	return ensure(cssi, vk, extent, VK_FORMAT_UNDEFINED, format, true);
+ }
+ 
+ /*!
+@@ -352,7 +369,15 @@ comp_scratch_single_images_ensure_mutable(struct comp_scratch_single_images *css
+                                           struct vk_bundle *vk,
+                                           VkExtent2D extent)
+ {
+-	return ensure(cssi, vk, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM);
++	return ensure(cssi, vk, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM, true);
++}
++
++bool
++comp_scratch_single_images_ensure_mutable_sampled(struct comp_scratch_single_images *cssi,
++                                                  struct vk_bundle *vk,
++                                                  VkExtent2D extent)
++{
++	return ensure(cssi, vk, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM, false);
+ }
+ 
+ void
+@@ -462,7 +487,7 @@ comp_scratch_stereo_images_ensure(struct comp_scratch_stereo_images *cssi, struc
+ 
+ 	// Get info we need to share with.
+ 	struct xrt_swapchain_create_info info = XRT_STRUCT_INIT;
+-	fill_info(extent, srgb_format, unorm_format, &info);
++	fill_info(extent, srgb_format, unorm_format, true, &info);
+ 
+ 	struct tmp ts[2]; // Is initialized in function.
+ 	if (!tmp_init_and_create(&ts[0], vk, &info, srgb_format, unorm_format)) {
+diff --git a/src/xrt/compositor/util/comp_scratch.h b/src/xrt/compositor/util/comp_scratch.h
+index 137cf0544..45cc0bdfb 100644
+--- a/src/xrt/compositor/util/comp_scratch.h
++++ b/src/xrt/compositor/util/comp_scratch.h
+@@ -126,6 +126,20 @@ comp_scratch_single_images_ensure_mutable(struct comp_scratch_single_images *css
+                                           struct vk_bundle *vk,
+                                           VkExtent2D extent);
+ 
++/*!
++ * Like @ref comp_scratch_single_images_ensure_mutable, but for images that are
++ * only rendered to and sampled, never written as storage images. That keeps
++ * them compressible on GPUs that cannot compress storage images.
++ *
++ * @public @memberof comp_scratch_single_images
++ *
++ * @ingroup comp_util
++ */
++bool
++comp_scratch_single_images_ensure_mutable_sampled(struct comp_scratch_single_images *cssi,
++                                                  struct vk_bundle *vk,
++                                                  VkExtent2D extent);
++
+ /*!
+  * Free all images allocated, @p init must be called before calling this
+  * function, is safe to call without any image allocated.
+diff --git a/src/xrt/drivers/CMakeLists.txt b/src/xrt/drivers/CMakeLists.txt
+index bd31b3374..747bbfd36 100644
+--- a/src/xrt/drivers/CMakeLists.txt
++++ b/src/xrt/drivers/CMakeLists.txt
+@@ -249,6 +249,64 @@ if(XRT_BUILD_DRIVER_ROKID)
+ 	list(APPEND ENABLED_HEADSET_DRIVERS rokid)
+ endif()
+ 
++if(XRT_BUILD_DRIVER_PICO4)
++	add_library(
++		drv_pico4 STATIC
++		pico4/pico4_blemcu.c
++		pico4/pico4_blemcu.h
++		pico4/pico4_cam.c
++		pico4/pico4_cam.h
++		pico4/pico4_controller.c
++		pico4/pico4_controller.h
++		pico4/pico4_ctrack.cpp
++		pico4/pico4_ctrack.h
++		pico4/pico4_ctrack_blob.cpp
++		pico4/pico4_ctrack_blob.hpp
++		pico4/pico4_ctrack_calib.cpp
++		pico4/pico4_ctrack_calib.hpp
++		pico4/pico4_ctrack_engine.cpp
++		pico4/pico4_ctrack_engine.hpp
++		pico4/pico4_ctrack_imu.cpp
++		pico4/pico4_ctrack_imu.hpp
++		pico4/pico4_ctrack_init.cpp
++		pico4/pico4_ctrack_init.hpp
++		pico4/pico4_ctrack_model.cpp
++		pico4/pico4_ctrack_model.hpp
++		pico4/pico4_ctrack_runner.cpp
++		pico4/pico4_ctrack_runner.hpp
++		pico4/pico4_ctrack_solve.cpp
++		pico4/pico4_ctrack_solve.hpp
++		pico4/pico4_ctrack_types.hpp
++		pico4/pico4_fusion.c
++		pico4/pico4_fusion.h
++		pico4/pico4_hmd.c
++		pico4/pico4_interface.h
++		pico4/pico4_ipd.c
++		pico4/pico4_ipd.h
++		pico4/pico4_lens.c
++		pico4/pico4_lens.h
++		pico4/pico4_passthrough.c
++		pico4/pico4_passthrough.h
++		pico4/pico4_slam.c
++		pico4/pico4_slam.h
++		pico4/pico4_ssc.c
++		pico4/pico4_ssc.h
++		pico4/pico4_station.c
++		pico4/pico4_station.h
++		pico4/pico4_tcam.c
++		pico4/pico4_tcam.h
++		)
++	# PICO OS's controller tracker is built without fused multiply-adds; round alike.
++	target_compile_options(drv_pico4 PRIVATE -ffp-contract=off)
++	target_link_libraries(
++		drv_pico4 PRIVATE xrt-interfaces aux_util aux_os aux_math xrt-external-cjson Eigen3::Eigen
++		)
++	if(XRT_FEATURE_SLAM)
++		target_link_libraries(drv_pico4 PRIVATE aux_tracking)
++	endif()
++	list(APPEND ENABLED_HEADSET_DRIVERS pico4)
++endif()
++
+ if(XRT_BUILD_DRIVER_RIFT)
+ 	add_library(drv_rift STATIC rift/rift_hmd.c rift/rift_distortion.c rift/rift_prober.c)
+ 	target_include_directories(drv_rift SYSTEM PRIVATE)
+diff --git a/src/xrt/targets/common/CMakeLists.txt b/src/xrt/targets/common/CMakeLists.txt
+index a78847a05..b60c6ecca 100644
+--- a/src/xrt/targets/common/CMakeLists.txt
++++ b/src/xrt/targets/common/CMakeLists.txt
+@@ -158,6 +158,10 @@ if(XRT_BUILD_DRIVER_ROKID)
+ 	target_link_libraries(target_lists PRIVATE drv_rokid)
+ endif()
+ 
++if(XRT_BUILD_DRIVER_PICO4)
++	target_link_libraries(target_lists PRIVATE drv_pico4)
++endif()
++
+ if(XRT_HAVE_V4L2)
+ 	target_link_libraries(target_lists PRIVATE drv_v4l2)
+ endif()
+diff --git a/src/xrt/targets/common/target_lists.c b/src/xrt/targets/common/target_lists.c
+index 74482e0b6..829c1c187 100644
+--- a/src/xrt/targets/common/target_lists.c
++++ b/src/xrt/targets/common/target_lists.c
+@@ -56,6 +56,10 @@
+ #include "rokid/rokid_interface.h"
+ #endif
+ 
++#ifdef XRT_BUILD_DRIVER_PICO4
++#include "pico4/pico4_interface.h"
++#endif
++
+ #ifdef XRT_BUILD_DRIVER_HYDRA
+ #include "hydra/hydra_interface.h"
+ #endif
+@@ -221,6 +225,10 @@ struct xrt_prober_entry *target_entry_lists[] = {
+ };
+ 
+ xrt_auto_prober_create_func_t target_auto_list[] = {
++#ifdef XRT_BUILD_DRIVER_PICO4
++    pico4_create_auto_prober,
++#endif
++
+ #ifdef XRT_BUILD_DRIVER_PSVR
+     psvr_create_auto_prober,
+ #endif

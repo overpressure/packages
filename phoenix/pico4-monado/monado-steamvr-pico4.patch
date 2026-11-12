@@ -1,0 +1,170 @@
+--- a/src/external/openvr_includes/openvr_driver.h
++++ b/src/external/openvr_includes/openvr_driver.h
+@@ -2740,9 +2740,14 @@ namespace vr
+ 		* the upper left of that eye's viewport and 1,1 in the lower right of that eye's viewport. */
+ 		virtual DistortionCoordinates_t ComputeDistortion( EVREye eEye, float fU, float fV ) = 0;
+ 
++		/** Computes the result of the inverse distortion function for the specified eye, channel, and input UV.
++		* Operation can fail, returns success/failure, on success result is stored in *pResult
++		* (IVRDisplayComponent_003). */
++		virtual bool ComputeInverseDistortion( HmdVector2_t *pResult, EVREye eEye, uint32_t unChannel, float fU, float fV ) = 0;
++
+ 	};
+ 
+-	static const char *IVRDisplayComponent_Version = "IVRDisplayComponent_002";
++	static const char *IVRDisplayComponent_Version = "IVRDisplayComponent_003";
+ 	static const char *IVRDisplayComponent_Version3 = "IVRDisplayComponent_003";
+ 
+ }
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -42,6 +42,13 @@ extern "C" {
+ }
+ #include "math/m_vec3.h"
+ 
++// The PICO 4 driver's inverse distortion (drivers/pico4/pico4_interface.h); weak, so a
++// build without that driver still links.
++extern "C" bool
++pico4_hmd_compute_inverse_distortion(
++    struct xrt_device *xdev, uint32_t view, uint32_t channel, float u, float v, float *out_u, float *out_v)
++    __attribute__((weak));
++
+ #if defined(__GNUC__)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+@@ -121,7 +128,8 @@ apply_pose(struct xrt_space_relation *rel, vr::DriverPose_t *m_pose)
+ 		m_pose->poseIsValid = false;
+ 	}
+ 
+-	if ((rel->relation_flags & XRT_SPACE_RELATION_POSITION_TRACKED_BIT) != 0) {
++	// Inferred positions too: 3DoF controllers place themselves with an arm model.
++	if ((rel->relation_flags & XRT_SPACE_RELATION_POSITION_VALID_BIT) != 0) {
+ 		copy_vec3(&rel->pose.position, m_pose->vecPosition);
+ 	} else {
+ 	}
+@@ -410,6 +418,10 @@ public:
+ 				m_render_model = "oculus_cv1_controller_right";
+ 			}
+ 			break;
++		case XRT_DEVICE_PICO4_CONTROLLER:
++			// PICO OS's own controller models, extracted at build time (pico4/controllermodel.py).
++			m_render_model = hand == XRT_HAND_LEFT ? "{monado}pico4_controller_left" : "{monado}pico4_controller_right";
++			break;
+ 		case XRT_DEVICE_VIVE_WAND: m_render_model = "vr_controller_vive_1_5"; break;
+ 		case XRT_DEVICE_VIVE_TRACKER_GEN1:
+ 		case XRT_DEVICE_VIVE_TRACKER_GEN2:
+@@ -436,6 +448,17 @@ public:
+ 	{
+ 		enum xrt_input_type monado_input_type = XRT_GET_INPUT_TYPE(monado_input_name);
+ 
++		// One profile serves both hands (the PICO 4's A/B are on the right controller, X/Y on
++		// the left): leave out what this device lacks instead of missing it every frame.
++		bool present = false;
++		for (uint32_t i = 0; i < m_xdev->input_count && !present; i++) {
++			present = m_xdev->inputs[i].name == monado_input_name;
++		}
++		if (!present) {
++			ovrd_log("No input for %s on this device\n", steamvr_control_path);
++			return;
++		}
++
+ 		SteamVRDriverControlInput in;
+ 
+ 		in.monado_input_type = monado_input_type;
+@@ -623,6 +646,9 @@ public:
+ 			AddOutputControl(XRT_OUTPUT_NAME_PSMV_RUMBLE_VIBRATION, "/output/haptic");
+ 		} break;
+ 
++		case XRT_DEVICE_PICO4_CONTROLLER: {
++			AddOutputControl(XRT_OUTPUT_NAME_PICO4_HAPTIC, "/output/haptic");
++		} break;
+ 		case XRT_DEVICE_TOUCH_CONTROLLER: break;    // TODO
+ 		case XRT_DEVICE_WMR_CONTROLLER: break;      // TODO
+ 		case XRT_DEVICE_XBOX_CONTROLLER: break;     // TODO
+@@ -873,6 +899,8 @@ public:
+ 			grip_name = XRT_INPUT_TOUCH_GRIP_POSE;
+ 		} else if (m_xdev->name == XRT_DEVICE_SIMPLE_CONTROLLER) {
+ 			grip_name = XRT_INPUT_SIMPLE_GRIP_POSE;
++		} else if (m_xdev->name == XRT_DEVICE_PICO4_CONTROLLER) {
++			grip_name = XRT_INPUT_PICO4_AIM_POSE; // its render model's frame is the aim frame
+ 		} else {
+ 			ovrd_log("Unhandled device name %u\n", m_xdev->name);
+ 			grip_name = XRT_INPUT_GENERIC_HEAD_POSE; // ???
+@@ -1139,6 +1167,7 @@ public:
+ 	virtual void GetEyeOutputViewport(vr::EVREye eEye, uint32_t *pnX, uint32_t *pnY, uint32_t *pnWidth, uint32_t *pnHeight);
+ 	virtual void GetProjectionRaw(vr::EVREye eEye, float *pfLeft, float *pfRight, float *pfTop, float *pfBottom);
+ 	virtual vr::DistortionCoordinates_t ComputeDistortion(vr::EVREye eEye, float fU, float fV);
++	virtual bool ComputeInverseDistortion(vr::HmdVector2_t *pResult, vr::EVREye eEye, uint32_t unChannel, float fU, float fV);
+ 
+ 	// clang-format on
+ 
+@@ -1263,7 +1292,8 @@ void *
+ CDeviceDriver_Monado::GetComponent(const char *pchComponentNameAndVersion)
+ {
+ 	// clang-format off
+-	if (strcmp(pchComponentNameAndVersion, vr::IVRDisplayComponent_Version) == 0) {
++	if (strcmp(pchComponentNameAndVersion, vr::IVRDisplayComponent_Version) == 0 ||
++	    strcmp(pchComponentNameAndVersion, vr::IVRDisplayComponent_Version3) == 0) {
+ 		return (vr::IVRDisplayComponent *)this;
+ 	}
+ 	// clang-format on
+@@ -1381,8 +1411,9 @@ CDeviceDriver_Monado::GetRecommendedRenderTargetSize(uint32_t *pnWidth, uint32_t
+ 
+ 
+ 
+-	*pnWidth = m_xdev->hmd->screens[0].w_pixels * fscale;
+-	*pnHeight = m_xdev->hmd->screens[0].h_pixels * fscale;
++	// OpenVR asks for one eye's size; screens[0] spans both eyes on side-by-side panels.
++	*pnWidth = m_xdev->hmd->views[0].display.w_pixels * fscale;
++	*pnHeight = m_xdev->hmd->views[0].display.h_pixels * fscale;
+ 
+ 	ovrd_log("Render Target Size: %dx%d (%fx)\n", *pnWidth, *pnHeight, fscale);
+ }
+@@ -1410,6 +1441,30 @@ CDeviceDriver_Monado::GetProjectionRaw(vr::EVREye eEye, float *pfLeft, float *pf
+ 	ovrd_log("Projection Raw: L%f R%f T%f B%f\n", *pfLeft, *pfRight, *pfTop, *pfBottom);
+ }
+ 
++/*!
++ * The PICO 4's exact inverse (its lens model is radial). Without it SteamVR inverts
++ * ComputeDistortion numerically for its Facet renderer, which fails at the border of
++ * the field of view: stretched triangles there flicker during head turns. Other
++ * devices return false, and SteamVR inverts numerically as before.
++ */
++bool
++CDeviceDriver_Monado::ComputeInverseDistortion(
++    vr::HmdVector2_t *pResult, vr::EVREye eEye, uint32_t unChannel, float fU, float fV)
++{
++	struct xrt_vec2 *rot = m_xdev->hmd->views[eEye].rot.vecs;
++	if (rot[0].x != 1 || rot[0].y != 0 || rot[1].x != 0 || rot[1].y != 1) {
++		return false; // ComputeDistortion rotates its input first; only the unrotated case here
++	}
++	float u, v;
++	if (pico4_hmd_compute_inverse_distortion == NULL ||
++	    !pico4_hmd_compute_inverse_distortion(m_xdev, eEye, unChannel, fU, fV, &u, &v)) {
++		return false;
++	}
++	pResult->v[0] = u;
++	pResult->v[1] = v;
++	return true;
++}
++
+ vr::DistortionCoordinates_t
+ CDeviceDriver_Monado::ComputeDistortion(vr::EVREye eEye, float fU, float fV)
+ {
+@@ -1607,10 +1662,14 @@ CServerDriver_Monado::HandleHapticEvent(vr::VREvent_t *event)
+ 		return;
+ 	}
+
+-	struct xrt_output_value out;
++	// The type tells drivers what the value holds; unset, a driver checking it refuses the vibration.
++	struct xrt_output_value out = {};
++	out.type = XRT_OUTPUT_VALUE_TYPE_VIBRATION;
+ 	out.vibration.amplitude = amp;
+ 	if (duration > 0.00001) {
+ 		out.vibration.duration_ns = (time_duration_ns)(duration * 1000.f * 1000.f * 1000.f);
+ 	} else {
+-		out.vibration.duration_ns = XRT_MIN_HAPTIC_DURATION;
++		// SteamVR's pulses without a duration (its hover feedback) are single short pulses, not
++		// OpenXR's minimum duration, which PICO OS plays for 500 ms: the motor's shortest, 10 ms.
++		out.vibration.duration_ns = 10 * 1000 * 1000;
+ 	}

@@ -1,0 +1,52 @@
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -49,6 +49,10 @@
+     struct xrt_device *xdev, uint32_t view, uint32_t channel, float u, float v, float *out_u, float *out_v)
+     __attribute__((weak));
+ 
++// Whether the PICO 4 HMD is worn, from its wear sensor (pico4_interface.h); weak as above.
++extern "C" bool
++pico4_hmd_get_presence(struct xrt_device *xdev, bool *out_worn) __attribute__((weak));
++
+ #if defined(__GNUC__)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+@@ -1190,6 +1194,10 @@
+ 	std::thread *m_poseUpdateThread = NULL;
+ 	virtual void PoseUpdateThreadFunction();
+ 
++	//! SteamVR's user presence from the headset's wear sensor; -1 until it has reported.
++	vr::VRInputComponentHandle_t m_proximity = vr::k_ulInvalidInputComponentHandle;
++	int m_worn = -1;
++
+ 	// clang-format on
+ };
+ 
+@@ -1250,6 +1258,13 @@
+ 		vr::VRServerDriverHost()->TrackedDevicePoseUpdated(m_trackedDeviceIndex, GetPose(),
+ 		                                                   sizeof(vr::DriverPose_t));
+ 		update_battery(m_xdev, m_ulPropertyContainer, &battery_at);
++		bool worn = false;
++		if (m_proximity != vr::k_ulInvalidInputComponentHandle && pico4_hmd_get_presence(m_xdev, &worn) &&
++		    (int)worn != m_worn) {
++			vr::VRDriverInput()->UpdateBooleanComponent(m_proximity, worn, 0);
++			m_worn = worn;
++			ovrd_log("Headset %s\n", worn ? "worn" : "taken off");
++		}
+ 	}
+ 	ovrd_log("Stopping HMD pose update thread\n");
+ }
+@@ -1278,6 +1293,13 @@
+ 	// return a constant that's not 0 (invalid) or 1 (reserved for Oculus)
+ 	vr::VRProperties()->SetUint64Property( m_ulPropertyContainer, vr::Prop_CurrentUniverseId_Uint64, 2);
+ 
++	// User presence, as the Frame reports it from its proximity sensor: SteamVR's standby goes
++	// by it instead of guessing from head motion.
++	if (pico4_hmd_get_presence != NULL) {
++		vr::VRProperties()->SetBoolProperty(m_ulPropertyContainer, vr::Prop_ContainsProximitySensor_Bool, true);
++		vr::VRDriverInput()->CreateBooleanComponent(m_ulPropertyContainer, "/proximity", &m_proximity);
++	}
++
+ 	// avoid "not fullscreen" warnings from vrmonitor
+ 	//vr::VRProperties()->SetBoolProperty(m_ulPropertyContainer, vr::Prop_IsOnDesktop_Bool, false);
+ 

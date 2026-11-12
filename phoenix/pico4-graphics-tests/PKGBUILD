@@ -1,0 +1,26 @@
+# The PICO 4's Vulkan acceptance test: an offscreen render with pixel readback.
+pkgname=pico4-graphics-tests
+pkgver=2
+pkgrel=1
+pkgdesc="PICO 4 native graphics acceptance test (offscreen Vulkan)"
+arch=(aarch64)
+url="https://docs.vulkan.org/"
+license=(Unlicense)
+depends=(vulkan-icd-loader glibc)
+makedepends=(vulkan-headers glslang)
+source=(pico4-vulkan-test.c fullscreen.vert quadrants.frag)
+sha256sums=('1a53c535e73e60bd874463706ff1e2d5fefcd8538ba1425c87020ded59e26695'
+            'c4fe990f5bc2811e56d10aad69c919b1293cf81998c11dd6d3fa285e972e84f2'
+            '3621958044900da11132e6b67c76a07912383934f1f700e0ea775fac4f8dabc8')
+
+build() {
+  mkdir -p tests
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror pico4-vulkan-test.c -lvulkan -o tests/pico4-vulkan-test
+  glslang -V fullscreen.vert -o tests/fullscreen.vert.spv
+  glslang -V quadrants.frag -o tests/quadrants.frag.spv
+}
+
+package() {
+  install -Dm755 tests/pico4-vulkan-test -t "$pkgdir/usr/bin"
+  install -Dm644 tests/fullscreen.vert.spv tests/quadrants.frag.spv -t "$pkgdir/usr/share/pico4/graphics"
+}

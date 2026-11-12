@@ -1,0 +1,286 @@
+# Monado (OpenXR runtime) with a driver for the original PICO 4 on Valve's kernel:
+# head orientation from the ICM-42688 behind the sensor DSP,
+# through the same Qualcomm Sensor Core client protocol as pico4-imu, and 6DoF
+# from the four OV7251 tracking cameras (V4L2 through CAMSS, frame sync from the
+# controller radio) through PICO OS's tracker (pico4-slamd) or Monado's SLAM tracker
+# with Basalt (pico4-basalt), plus the two controllers from the radio's packets.
+# Upstream Monado, pinned by commit, plus this project's driver files and a
+# patch that registers them. Built as a service (monado-service owns the
+# hardware for clients of any user; the runtime library is its IPC
+# client) and as a SteamVR driver plugin (driver_monado, the headset driver of
+# Valve's VR session). The main compositor shows frames on the two panels
+# through Vulkan's display; the null compositor serves headless clients. The
+# acceptance clients read the head pose (pico4-openxr-pose) and render frames
+# (pico4-openxr-display) through the OpenXR loader; pico4-cam checks the
+# tracking cameras on their own; pico4-ctrack-replay runs the controller LED
+# tracker over pico4-cam's recordings; pico4-roomview hands the forward cameras to
+# SteamVR's room view; pico4-lens-panel and pico4-onboarding are SteamVR
+# overlays (the lens distance, the first run's introduction).
+pkgname=pico4-monado
+pkgver=25.1.0
+pkgrel=16
+arch=(aarch64)
+url="https://monado.freedesktop.org"
+license=(BSL-1.0)
+depends=(openxr vulkan-icd-loader libusb systemd-libs dbus libcap libdrm libffi libx11 libxau libxcb
+         libxdmcp wayland gcc-libs glibc opencv libbsd cairo pango fontconfig glib2)
+makedepends=(git cmake ninja eigen vulkan-headers glslang python cairo pango fontconfig)
+# Loaded at runtime (VIT); without it the HMD stays on 3DoF.
+optdepends=('pico4-basalt: 6DoF head tracking')
+provides=(openxr-runtime)
+_commit=3b450e37b624f5edea366492ee2d267d673a35aa # v25.1.0
+source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_commit"
+        monado-pico4-driver.patch monado-steamvr-pico4.patch monado-service-sigterm.patch
+        monado-slam-prediction.patch monado-steamvr-battery.patch monado-vk-mutex-init-failure.patch
+        monado-steamvr-presence.patch monado-steamvr-camera.patch monado-steamvr-room.patch
+        monado-steamvr-pico-controller.patch monado-steamvr-roomview-mesh.patch monado-steamvr-floor.patch
+        monado-steamvr-frame-rates.patch monado-steamvr-lenses-standby.patch
+        pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
+        pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
+        pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
+        pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4-roomview.c
+        pico4_lens_panel.h pico4-lens-panel.cpp test_pico4_lens_panel.c
+        pico4_overlay.hpp pico4_onboarding.h pico4-onboarding.cpp test_pico4_onboarding.c
+        pico4_setup.h pico4_text.hpp test_pico4_setup.c pico4-onboarding.strings pico4-steamvr-switch.cpp
+        pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
+        pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
+        pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
+        pico4_ctrack_types.hpp pico4_ctrack_model.hpp pico4_ctrack_model.cpp pico4_ctrack_solve.hpp
+        pico4_ctrack_solve.cpp pico4_ctrack_init.hpp pico4_ctrack_init.cpp pico4_ctrack_blob.hpp
+        pico4_ctrack_blob.cpp pico4_ctrack_imu.hpp pico4_ctrack_imu.cpp pico4_ctrack_engine.hpp
+        pico4_ctrack_engine.cpp test_pico4_ctrack_solve.cpp test_pico4_ctrack_init.cpp
+        test_pico4_ctrack_blob.cpp test_pico4_ctrack_imu.cpp test_pico4_ctrack_engine.cpp
+        pico4-ctrack-replay.cpp pico4_ctrack.h pico4_ctrack.cpp pico4_ctrack_calib.hpp pico4_ctrack_calib.cpp
+        pico4_ctrack_runner.hpp pico4_ctrack_runner.cpp test_pico4_ctrack_runner.cpp test_pico4_ctrack_world.hpp
+        pico4_aimgrip.h test_pico4_aimgrip.c
+        pico4-vrcompositor-bindings.json pico4-controller-profile.json pico4-vrlink-bindings.json)
+sha256sums=(SKIP
+            'ae281727c9ba9a14402c9f3765e22a5be56925a6d4fe68bb61053cc471ae1d5c'
+            'f04b9832c6634909ea5015c942e10aa2780d2d217bbf1b20acd52673f2cefe3f'
+            'c8d1cb81fdcd5ed8f61b55299f1b89d9cb16a18b4ae91944b081d241c06f49a3'
+            'f847e3c43562aa0dd8b00c0d43b5e4af81c2997998df783c71eca379f7e00691'
+            'deb21504ed91c41d3a5279fa2f33c2095f3e986206f3478b5d15e487280ce6fb'
+            'cd7612262bab0209a41b45e953c01ae4b42523584cdfb92418de81cf63b8a315'
+            '7fd97e4c773650328927d286268ef7cf14a4a1107ba820753c6f498c2c4d8235'
+            'a75e36318ddf16587a8bce0643b8b3bc008a83cb6cd29e34ed024c1fe913cfaa'
+            '5df7942d43b14b60549244453c4677b559083d6015a7ae3d1414d4ead218c736'
+            'd76bc4cfbfc012041459d0f1ef7ec9f6548db0b23fdafee90ed31b08a636b202'
+            '5a114886cd0470208b3cb5d697f33ffd7235db38f7c9990b860ce1ddde22ad32'
+            '41be8ce4a88a79a8f2b98cb82a8a4bcc4693890410acc1e9776bd16d347310f9'
+            '079215437455bb24dabf36ca8598a43e69b25b7fbb20caebf8850fd7d137dc4e'
+            '4ea7235b043e92d3ccb9a21277868a7afb2d8963a03d93a1623de8681a136ac6'
+            'e712b477138e19966b8a4ba62758c096be2979664c7d97f40c1a1c91feeb5b8b'
+            'cb0765d13f8d5a985320e252cfecea3f9e4ae390eb1db73cb7d28bd4c3455053'
+            '44160658b28ea1bb24c6c2fc9f378fba14ffe6b1ae4ae2e8b9cbbb44c5ce96ac'
+            '5a5317c24d19d91ac502707d6fa8e391d4ba7e1c93875bc8b4f77f14bb84a712'
+            '3d3a356292827bde4644810731386f366e4f2afa029ee36fec9ecc1db4692363'
+            '9e77af302391bd4a49fa35012236c2dca2fc61e2ef20bf44bdf0770ac5925efe'
+            '1117a9a17155cd509a767fa9ecb16504342c06bcf2d2fc7b0671a6689d42e733'
+            'e80568bc5a6f6b0def8c80f5ad8facb8569bd92759c6c540cfb9751f28b52195'
+            '5862557f9d2abfc932e4532741a8bcf5f58dc2c431a0d89805fa81461368880d'
+            'eec9402c5101fd3e3b3603eb9e69c5840fa86b2525466ca3508aca8ee710390e'
+            '787136e02024254b355d1aae427799c206456307040ecc29d543962179364a96'
+            '732a6738b8e89063d247c820f0fdf6de7be2b2b9435e751886450474ffa7a2d0'
+            '93a500075473c85d7c9d1ce81f609a26f876d18c8325b10af5e710c44657d7da'
+            '41bb03af46edb3c3a593cefbc2246382826a16a3b567619b937d9f45df85eedb'
+            'a82b964bb5e5437f20ea2e596c3c6e67281d2ed8459351cadd2ef89bd6522bbe'
+            '40ec271b33e28552556de71a2ab81219860ffcd1a1b920949d9b5ac2d405f374'
+            '50a119d180c7a970a5196ee2428cd8ce166cf8bb392e8fc90a5607ba7302c3ed'
+            '76ba6acb295abafd3235bf828bc3534543ea0c279a054d38c032b48dcab17f89'
+            '54aa815f0d7e4a1370b94cf1e51c3ce84c38d6bdad66d7e2a41e56ed598efbd8'
+            'e160944ec154fa5caf43d2177396656c8561d1739df07510ce75c3b8ddafa3b3'
+            'ad5d2e7080954c335d87e2a03439f35291945f392a6c6ad2a4e19dd3b213c748'
+            '1cb3fcda349cdd7c4c2a824af24fc893601f8cb435d63b7bde1ea4ff66709fdf'
+            '14a50ebd279e461f9081db12d10e18b3e74fda64c073e4074a813baad4a18303'
+            'feb1df44c13708e387fcd0dcd6684026e39598cf717b7ac375060f21c9a4e2d9'
+            '2ea5da94a80c42fb322c5d0624aedf911403292f7cc21cd980883fc4ae900135'
+            'c02d70470b8a4925a5167d902aa2f57613ce67b45fcca9c18122616fc16b543a'
+            'cf979097f69fd4dbd40f9270a3e761a167f61202e8f9538e2316af016125e4e3'
+            '883c9ec2ef27c5ed578ad5f9e1672ee194df79d7a038ea98772e3681c07c76db'
+            '4104d15d75e3dff32b8edf5779b9a73cacd85e5a36d6bd1a8c23f928889a3cc6'
+            'f9df1ee528098a4cd4187586a0ca2c201735f4eaad22b784147231af5a8f7417'
+            '0d2c1e1afaa037fd71083b08376bbb28abaf422645797314823191f484182848'
+            'fe7eb489de353fd90d7e61066ffc85c199c3bd6a4093d45159c9b9a331fd0ddc'
+            '1e216b8317b7dcbdefb623a59dedf67ab580ffcfcd5b671a5420e777ce88aea9'
+            '15458e31c35d4b5ea13b8bfdc342c03a45da727787a1ca2c1f9bafa551c7674a'
+            'f45d76a543f622df7d8f67d7c8e541675832b80c1076afeed3499ecd06aba7f2'
+            'd573cc225562750c4003cab1c47ce52deddd58bc61a36f10c6d6f14086821f47'
+            'b229c53f03c67e4de8e30651f861deec6fd0140c8946d308402f00ca80cc356e'
+            '7bd223f649e624011dd36eee6e0b8921abb029beb5060849a1acb022baaca3d9'
+            'a52d561a66f774bfab2183f626d1eca003e69e40d5b1ef98a5e8fc2b1e4c4377'
+            '3b5723d2dfee9343828f49228ccaaf490205e2588bb02b39d5171b5d7299b619'
+            '85c59e96fa7aff425f05c3129679c707a324de9ff7870d11b977e2439c2c6463'
+            '33a77a059c243a3113b9d93125958a3ab4a4cf34491818f06134725c5e4f0bd3'
+            '4d65eeb635e98fb994fecf8cd5448e754c97c598eacea86852fb8930eaaadd08'
+            '6f9e6b63f008118305f60253257bcbf28354594e84b7bd8fa3b5ca33dcd11872'
+            '6168eaa35df0d363fbd7b5b86fca92b2aa63c2c06979932cf03a9531279773cc'
+            '8b0d4940bf8c375ffef357bc3024af9c1e05a12bd47bad44d5b543e25f382adf'
+            '8d0661a5780596de10ca0523dca85dcce16dddad9da4803f8a130b7569579a8f'
+            '6d43d689c71e4b9d8c845e3eabdc7b1b6f8ba6addef102779b532517b60beddf'
+            '89f2fa7a3b71e382d577ff65f34c044914ae659de01b351fd3ff03456934c85d'
+            '9267c016ba1a1dc4a71f27a0c8d3656b14267491a25174bed64ce03fe04110ec'
+            '2154e0e5d360f5021b7e651a12594b6b59c7dfeba416cba04466e934c8449ba0'
+            'efb674c70e93d2307b100b847753d5ed984de784f420cab4c90bc226bfef27d6'
+            'c754c18a431f28722499e87edb855a2e17147b28fb9a8f89f1e957182fb4e941'
+            '93d0412a4b61dd8c021dc00ae3eec0e27aeec6de2a8ad611cfb2b0e8ae16e009'
+            'bb51e06f749fa4a4f7a46eaa3dfdba0e5e737faff0eb866bd0b0abac05bea66e'
+            'a86978684d277b9688e168882767b0f305d908ffb1dbdfc5233eaf7899560a25'
+            '487342ede018e3deac1f210e6c9ec0a88d1c1d4c1354a163546e5e78f5a7db39'
+            '56e5642855f6234d043f5e7fe704d1a0cbf48b50878b96eec013a7bda189b6d4'
+            '53a0f40c9e4eafba8ca0371705190a404c7b41afc13e48e2767b34e94b3e89b6'
+            'e3c9c185970dd76bf85fb65bfc0ff48c47ca683f9aed3ee3cdb8d1536c3d85ae'
+            '5d733977bcd55807f66ed8a48be20d0d037fea5008901bcdf7fe3ba78514b689'
+            'ced51a269417c90a90f4217555fd424ca71e1912a0964d0d57a5f76337c0f277'
+            '2b6a132c94e7580bbf7440e1af01ab4cb3fbe7f0fa0b35d2bfa15b227dfd5423'
+            '102b395a773bc4131fb9509d7c52017a8b0760843a30d724dbc6ed68382da2a6'
+            'acfe9ed644f091abf627b4d8468a7ec96822765027ec54fdfb8712e3cbadd1f7'
+            'ddfc838ccd59e5c4c4850bfafd56f2ef0c182cc0b3af391b5f9a8d7ee437b8ea'
+            'df849619f9deabb65415d937df1f886af1f7d32192013aaf0e2fbadeaea8d3a2'
+            '2ef636acc6539ff3979945600814f639cfd992bf691892388f4f8218afa3d5db'
+            '5c55e12f081efaf1237fdd80e24b6ee77efa03ccf8aa70033f26a0e43fd43aba'
+            'dbe2b80188b12f1fc6559609bc96171bd14026c67903e4fc4f3eddf86ebda015'
+            '10dfe18c37bf47767fa7855123fd323390f7aa436a24f80dda419aa0e4429c50'
+            'b06cd6b2ce012674c1d2b79fbe01080e8f011b901678371e0998864126090953'
+            'c815d96fb72a7d9d3f042b8c37c755735a3cf430855bc0afd06189edfa30a741'
+            'a99af31987d022891b692ceae68d5eda1c91809d97edc219045d9493e23b3b9a'
+            '8eb1c38608f42ccf3599b731dbf4ae30c0deadbce6d715569f919e204e9bf3de'
+            'f667c80d96c3251dd5e49ce10017b4fd702289ba2df5d49bacaf4465ceaee050'
+            'c231b75202e6881295f87ec55580bb96aaf13a2637fed78bc20499ed003c6fc8'
+            '2a789ddf06894ec402ab73fb3cefbfdfadfe8d58d8fd20b2488c566d430fa170')
+
+prepare() {
+  patch -d monado -p1 < monado-pico4-driver.patch
+  patch -d monado -p1 < monado-steamvr-pico4.patch
+  patch -d monado -p1 < monado-service-sigterm.patch
+  patch -d monado -p1 < monado-slam-prediction.patch
+  patch -d monado -p1 < monado-steamvr-battery.patch
+  # A compositor whose init failed before Vulkan (the panels taken) must not abort on teardown.
+  patch -d monado -p1 < monado-vk-mutex-init-failure.patch
+  # The headset's wear sensor as SteamVR's user presence (/proximity).
+  patch -d monado -p1 < monado-steamvr-presence.patch
+  # SteamVR's camera (room view) from the forward tracking cameras.
+  patch -d monado -p1 < monado-steamvr-camera.patch
+  # A tracking universe per room (the tracker's map).
+  patch -d monado -p1 < monado-steamvr-room.patch
+  patch -d monado -p1 < monado-steamvr-pico-controller.patch
+  # The room view's depth mesh: the camera image on a sphere around the head.
+  patch -d monado -p1 < monado-steamvr-roomview-mesh.patch
+  patch -d monado -p1 < monado-steamvr-floor.patch
+  # The panels' refresh rates, which Steam Link's client sends to the PC.
+  patch -d monado -p1 < monado-steamvr-frame-rates.patch
+  # The eye positions follow the lens motor, the backlight follows SteamVR's standby.
+  patch -d monado -p1 < monado-steamvr-lenses-standby.patch
+}
+
+build() {
+  # The project's files go in here rather than in prepare(): an incremental build
+  # (makepkg -e) then recompiles only what changed, because
+  # install -C leaves unchanged files and their timestamps alone.
+  install -C -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c \
+    pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c \
+    pico4_tcam.h pico4_tcam.c pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
+    pico4_controller.c pico4_fusion.h pico4_fusion.c pico4_ctrack.h pico4_ctrack.cpp pico4_ctrack_types.hpp \
+    pico4_ctrack_model.hpp pico4_ctrack_model.cpp pico4_ctrack_solve.hpp pico4_ctrack_solve.cpp \
+    pico4_ctrack_init.hpp pico4_ctrack_init.cpp pico4_ctrack_blob.hpp pico4_ctrack_blob.cpp pico4_ctrack_imu.hpp \
+    pico4_ctrack_imu.cpp pico4_ctrack_engine.hpp pico4_ctrack_engine.cpp pico4_ctrack_runner.hpp \
+    pico4_ctrack_runner.cpp pico4_ctrack_calib.hpp pico4_ctrack_calib.cpp pico4_aimgrip.h
+
+  # The protocol and model tests run here because build/packages.sh uses --nocheck.
+  ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_ssc test_pico4_ssc.c pico4_ssc.c
+  ./test_pico4_ssc
+  ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -Imonado/src/external/cjson -o test_pico4_lens \
+    test_pico4_lens.c pico4_lens.c pico4_ipd.c monado/src/external/cjson/cjson/cJSON.c -lm
+  ./test_pico4_lens
+  ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -Imonado/src/xrt/include -Imonado/src/external/cjson \
+    -o test_pico4_aimgrip test_pico4_aimgrip.c monado/src/external/cjson/cjson/cJSON.c -lm
+  ./test_pico4_aimgrip
+  ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_tracking test_pico4_tracking.c \
+    pico4_station.c pico4_tcam.c pico4_blemcu.c pico4_passthrough.c -lm -lpthread
+  ./test_pico4_tracking
+  ${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror -Imonado/src/xrt/include -o test_pico4_fusion test_pico4_fusion.c \
+    pico4_fusion.c -lm
+  ./test_pico4_fusion
+  ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_lens_panel test_pico4_lens_panel.c -lm
+  ./test_pico4_lens_panel
+  ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_onboarding test_pico4_onboarding.c
+  ./test_pico4_onboarding
+  ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_setup test_pico4_setup.c
+  ./test_pico4_setup
+  # The controller tracker (C++17, Eigen), compiled once for its tests and the replay tool.
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -c pico4_tcam.c pico4_blemcu.c
+  local ctrack=(model solve init blob imu engine runner calib) objs=(pico4_tcam.o) m t
+  for m in "${ctrack[@]}"; do
+    ${CXX:-c++} -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Werror -isystem /usr/include/eigen3 -c -o ctrack_$m.o \
+      pico4_ctrack_$m.cpp
+    objs+=(ctrack_$m.o)
+  done
+  for t in solve init blob imu engine runner; do
+    ${CXX:-c++} -std=c++17 -O1 -Wall -Wextra -Werror -isystem /usr/include/eigen3 -o test_pico4_ctrack_$t \
+      test_pico4_ctrack_$t.cpp "${objs[@]}" -lpthread
+    ./test_pico4_ctrack_$t
+  done
+
+  # Configured once per build tree; ninja reruns CMake when its inputs change.
+  if [[ ! -f build/build.ninja ]]; then
+    # Only the PICO 4 driver and the simulated HMD (headless fallback).
+    local off
+    off=$(sed -n '/^\tAVAILABLE_DRIVERS$/,/^\t)$/p' monado/CMakeLists.txt | grep -o '"[A-Z0-9_]*"' | tr -d '"' |
+      grep -vx 'PICO4\|SIMULATED' | sed 's/^/-DXRT_BUILD_DRIVER_/; s/$/=OFF/')
+    [[ -n "$off" ]]
+    # shellcheck disable=SC2086
+    cmake -S monado -B build -G Ninja -DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr \
+      -DCMAKE_INSTALL_LIBDIR=lib -DXRT_BUILD_DRIVER_PICO4=ON -DXRT_BUILD_DRIVER_SIMULATED=ON $off \
+      -DXRT_FEATURE_SERVICE=ON -DXRT_HAVE_SYSTEMD=ON -DXRT_FEATURE_SERVICE_SYSTEMD=ON \
+      -DXRT_INSTALL_SYSTEMD_UNIT_FILES=OFF -DXRT_MODULE_COMPOSITOR_MAIN=ON -DXRT_MODULE_COMPOSITOR_NULL=ON \
+      -DXRT_FEATURE_STEAMVR_PLUGIN=ON -DXRT_MODULE_MONADO_GUI=OFF -DXRT_BUILD_SAMPLES=OFF -DBUILD_TESTING=OFF \
+      -DXRT_HAVE_SDL2=OFF -DXRT_HAVE_OPENCV=ON -DXRT_FEATURE_SLAM=ON -DXRT_MODULE_MERCURY_HANDTRACKING=OFF \
+      -DXRT_HAVE_LIBUVC=OFF -DXRT_HAVE_FFMPEG=OFF -DXRT_HAVE_GST=OFF \
+      -DXRT_HAVE_PERCETTO=OFF -DXRT_FEATURE_TRACING=OFF -DXRT_HAVE_OPENGL=OFF -DXRT_HAVE_OPENGLES=OFF \
+      -DXRT_HAVE_EGL=OFF
+  fi
+  cmake --build build
+
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-pose pico4-openxr-pose.c -lopenxr_loader -lm
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-display pico4-openxr-display.c -lopenxr_loader -lvulkan -lm
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-cam pico4-cam.c \
+    pico4_cam.c pico4_station.c pico4_ssc.c -lpthread
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-roomview pico4-roomview.c -lvulkan -ldl -lm
+  ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -isystem monado/src/external/openvr_includes \
+    -o pico4-lens-panel pico4-lens-panel.cpp -lcairo -lvulkan -ldl -lm
+  ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -isystem monado/src/external/openvr_includes \
+    $(pkg-config --cflags pangocairo fontconfig) -o pico4-onboarding pico4-onboarding.cpp \
+    $(pkg-config --libs pangocairo fontconfig) -lcairo -lvulkan -ldl -lm
+  ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -isystem monado/src/external/openvr_includes \
+    -o pico4-steamvr-switch pico4-steamvr-switch.cpp -lcairo -lvulkan -ldl -lm
+  ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -isystem /usr/include/eigen3 -o pico4-ctrack-replay \
+    pico4-ctrack-replay.cpp "${objs[@]}" pico4_blemcu.o -lpthread -lm
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  # SteamVR for linuxarm64 loads drivers from bin/linuxarm64; Monado names the
+  # directory after the pointer size. The session's openvrpaths.vrpath lists
+  # /usr/share/steamvr-monado as an external driver.
+  mv "$pkgdir/usr/share/steamvr-monado/bin/linux64" "$pkgdir/usr/share/steamvr-monado/bin/linuxarm64"
+  [[ -s "$pkgdir/usr/share/steamvr-monado/bin/linuxarm64/driver_monado.so" ]]
+  # The service units are the image's (overpressure's adaptation layer): upstream's user
+  # units would start a second Monado per user.
+  rm -rf "$pkgdir/usr/lib/systemd"
+  # SteamVR's dashboard has no default bindings for this controller type: the profile names ours
+  # (pico4-controller-profile.json).
+  local input="$pkgdir/usr/share/steamvr-monado/resources/input"
+  install -Dm644 pico4-vrcompositor-bindings.json "$input/pico4_vrcompositor_bindings.json"
+  # Steam Link's client gets one of its own, or SteamVR simulates an Index for it.
+  install -Dm644 pico4-vrlink-bindings.json "$input/pico4_vrlink_bindings.json"
+  # The controllers are SteamVR's pico_controller (monado-steamvr-pico-controller.patch); its
+  # remapping of other controllers' bindings is SteamVR's own file.
+  install -Dm644 pico4-controller-profile.json "$input/pico4_controller_profile.json"
+  ln -s /opt/steamvr/resources/input/default_pico_controller_remapping.json "$input/default_pico_controller_remapping.json"
+  install -Dm755 pico4-lens-panel pico4-onboarding pico4-steamvr-switch -t "$pkgdir/usr/bin"
+  install -Dm644 pico4-onboarding.strings "$pkgdir/usr/share/pico4/onboarding.strings"
+  install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam pico4-ctrack-replay pico4-roomview -t "$pkgdir/usr/bin"
+  # The loader's system-wide active runtime.
+  install -dm755 "$pkgdir/etc/openxr/1"
+  ln -s /usr/share/openxr/1/openxr_monado.json "$pkgdir/etc/openxr/1/active_runtime.json"
+  install -Dm644 monado/LICENSES/BSL-1.0.txt "$pkgdir/usr/share/licenses/$pkgname/BSL-1.0.txt"
+}

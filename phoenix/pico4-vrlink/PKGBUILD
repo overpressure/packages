@@ -1,0 +1,21 @@
+# Steam Link's client (SteamVR's vrlink) with the PICO 4's controllers.
+# vrlink sends input only for the Steam Frame's controllers: this library, preloaded into vrlink by
+# its launcher, shows ours to it as the Frame's.
+pkgname=pico4-vrlink
+pkgver=1
+pkgrel=2
+arch=(aarch64)
+url="https://github.com/ValveSoftware/openvr"
+license=(BSL-1.0)
+depends=(glibc)
+source=(pico4-vrlink-compat.c)
+sha256sums=('4f1560488890bd91de877438fbf75503e66e69ea9338a08ae9746f66637eeda6')
+
+build() {
+  ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Werror -fPIC -shared -fvisibility=hidden $LDFLAGS \
+    -o libpico4-vrlink-compat.so pico4-vrlink-compat.c -ldl
+}
+
+package() {
+  install -Dm755 libpico4-vrlink-compat.so -t "$pkgdir/usr/lib"
+}

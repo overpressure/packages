@@ -1,0 +1,545 @@
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -14,7 +14,10 @@
+ #include <cstring>
+ #include <cassert>
+ #include <array>
++#include <atomic>
++#include <mutex>
+ #include <thread>
++#include <vector>
+ 
+ #include "math/m_api.h"
+ #include "ovrd_log.hpp"
+@@ -53,6 +56,20 @@
+ extern "C" bool
+ pico4_hmd_get_presence(struct xrt_device *xdev, bool *out_worn) __attribute__((weak));
+ 
++// SteamVR's camera from the PICO 4's forward tracking cameras (pico4_interface.h); weak as above.
++#include "../../drivers/pico4/pico4_passthrough.h"
++extern "C" bool
++pico4_hmd_camera_info(struct xrt_device *xdev, struct pico4_passthrough_info *out) __attribute__((weak));
++extern "C" void
++pico4_hmd_camera_stream(struct xrt_device *xdev, bool on) __attribute__((weak));
++extern "C" bool
++pico4_hmd_camera_frame(struct xrt_device *xdev,
++                       uint64_t after,
++                       int timeout_ms,
++                       uint8_t *y,
++                       uint32_t stride,
++                       struct pico4_passthrough_frame *out) __attribute__((weak));
++
+ #if defined(__GNUC__)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+@@ -1114,6 +1131,8 @@
+  *
+  */
+ 
++class CCameraComponent_Monado;
++
+ class CDeviceDriver_Monado : public vr::ITrackedDeviceServerDriver, public vr::IVRDisplayComponent
+ {
+ public:
+@@ -1198,6 +1217,11 @@
+ 	vr::VRInputComponentHandle_t m_proximity = vr::k_ulInvalidInputComponentHandle;
+ 	int m_worn = -1;
+ 
++	//! SteamVR's camera, when the HMD has one (the PICO 4's forward tracking cameras).
++	CCameraComponent_Monado *m_camera = NULL;
++	bool m_camera_probed = false;
++	CCameraComponent_Monado *Camera();
++
+ 	// clang-format on
+ };
+ 
+@@ -1221,6 +1245,433 @@
+ }
+ 
+ /*!
++ * SteamVR's block queues (IVRBlockQueue_005, public in the OpenVR SDK's C API but not in the
++ * driver header Monado carries): the calls this driver needs, in the interface's slot order.
++ * Only code inside vrserver may create queues; clients connect to them.
++ */
++class IVRBlockQueue005
++{
++public:
++	virtual int
++	Create(vr::PropertyContainerHandle_t *queue, const char *path, uint32_t block_data_size,
++	       uint32_t block_header_size, uint32_t block_count, uint32_t flags) = 0;
++	virtual int
++	Connect(vr::PropertyContainerHandle_t *queue, const char *path) = 0;
++	virtual int
++	Destroy(vr::PropertyContainerHandle_t queue) = 0;
++};
++
++/*!
++ * SteamVR's camera (IVRCameraComponent) from the PICO 4's two forward tracking cameras
++ * (drivers/pico4/pico4_interface.h): grey frames as NV12 with neutral chroma, both cameras in
++ * one frame, left above right, with their fisheye model (OpenVR's FTheta) as the distortion.
++ */
++class CCameraComponent_Monado : public vr::IVRCameraComponent
++{
++public:
++	CCameraComponent_Monado(struct xrt_device *xdev, const struct pico4_passthrough_info &info)
++	    : m_xdev(xdev), m_info(info), m_width(info.width), m_height(info.height * PICO4_PASSTHROUGH_CAMS),
++	      m_size(m_width * m_height * 3 / 2)
++	{}
++	virtual ~CCameraComponent_Monado()
++	{
++		StopVideoStream();
++		DestroyMeshQueues();
++	}
++
++	/*!
++	 * The room view's depth-mesh queues, which Valve's XR service provides on the Frame:
++	 * vrcompositor starts its room view only when it can connect to both, and reads them only
++	 * with depth projection and a mesh marked up to date, so they stay empty here.
++	 */
++	void
++	CreateMeshQueues()
++	{
++		vr::EVRInitError err = vr::VRInitError_None;
++		m_queues = (IVRBlockQueue005 *)vr::VRDriverContext()->GetGenericInterface("IVRBlockQueue_005", &err);
++		if (m_queues == nullptr) {
++			ovrd_log("Camera: no IVRBlockQueue_005 (%d)\n", (int)err);
++			return;
++		}
++		static const char *const paths[2] = {"/xrservice/roomview3d/meshData", "/xrservice/roomview3d/meshLayout"};
++		for (int i = 0; i < 2; i++) {
++			int r = m_queues->Create(&m_mesh_queue[i], paths[i], 16, 16, 1, 0);
++			ovrd_log("Camera: block queue %s: %s (%d)\n", paths[i], r == 0 ? "created" : "not created", r);
++			if (r != 0) {
++				m_mesh_queue[i] = 0;
++			}
++		}
++	}
++
++	void
++	DestroyMeshQueues()
++	{
++		for (int i = 0; i < 2; i++) {
++			if (m_queues != nullptr && m_mesh_queue[i] != 0) {
++				m_queues->Destroy(m_mesh_queue[i]);
++				m_mesh_queue[i] = 0;
++			}
++		}
++	}
++
++	bool
++	GetCameraFrameDimensions(vr::ECameraVideoStreamFormat format, uint32_t *width, uint32_t *height) override
++	{
++		if (format != vr::CVS_FORMAT_NV12) {
++			return false;
++		}
++		*width = m_width;
++		*height = m_height;
++		return true;
++	}
++
++	bool
++	GetCameraFrameBufferingRequirements(int *queue, uint32_t *size) override
++	{
++		*queue = 4;
++		*size = m_size;
++		ovrd_log("Camera: %d buffers of %u bytes wanted\n", *queue, *size);
++		return true;
++	}
++
++	bool
++	SetCameraFrameBuffering(int count, void **buffers, uint32_t size) override
++	{
++		if (count < 2 || size < m_size) {
++			ovrd_log("Camera: %d buffers of %u bytes refused (%u needed)\n", count, size, m_size);
++			return false;
++		}
++		std::lock_guard<std::mutex> lock(m_lock);
++		m_buffers.assign(buffers, buffers + count);
++		m_frames.assign(count, vr::CameraVideoStreamFrame_t{});
++		m_latest = -1;
++		for (void *buffer : m_buffers) {
++			memset((uint8_t *)buffer + m_width * m_height, 128, m_width * m_height / 2); // neutral chroma
++		}
++		ovrd_log("Camera: %d buffers of %u bytes\n", count, size);
++		return true;
++	}
++
++	bool
++	SetCameraVideoStreamFormat(vr::ECameraVideoStreamFormat format) override
++	{
++		return format == vr::CVS_FORMAT_NV12;
++	}
++
++	vr::ECameraVideoStreamFormat
++	GetCameraVideoStreamFormat() override
++	{
++		return vr::CVS_FORMAT_NV12;
++	}
++
++	bool
++	StartVideoStream() override
++	{
++		if (m_thread.joinable()) {
++			return true;
++		}
++		{
++			std::lock_guard<std::mutex> lock(m_lock);
++			if (m_buffers.empty()) {
++				ovrd_log("Camera: no buffers to stream into\n");
++				return false;
++			}
++		}
++		m_streaming = true;
++		m_paused = false;
++		m_sequence = 0;
++		m_start_ns = os_monotonic_get_ns();
++		pico4_hmd_camera_stream(m_xdev, true);
++		m_thread = std::thread(&CCameraComponent_Monado::Run, this);
++		ovrd_log("Camera: streaming %ux%u NV12\n", m_width, m_height);
++		return true;
++	}
++
++	void
++	StopVideoStream() override
++	{
++		if (!m_thread.joinable()) {
++			return;
++		}
++		m_streaming = false;
++		m_thread.join();
++		pico4_hmd_camera_stream(m_xdev, false);
++		ovrd_log("Camera: stopped after %u frames\n", m_sequence);
++	}
++
++	bool
++	IsVideoStreamActive(bool *paused, float *elapsed) override
++	{
++		*paused = m_paused;
++		*elapsed = m_streaming ? (float)((os_monotonic_get_ns() - m_start_ns) / 1e9) : 0.f;
++		return m_streaming;
++	}
++
++	const vr::CameraVideoStreamFrame_t *
++	GetVideoStreamFrame() override
++	{
++		std::lock_guard<std::mutex> lock(m_lock);
++		return m_latest >= 0 ? &m_frames[m_latest] : nullptr;
++	}
++
++	void
++	ReleaseVideoStreamFrame(const vr::CameraVideoStreamFrame_t *frame) override
++	{}
++
++	bool
++	SetAutoExposure(bool enable) override
++	{
++		return true; // the head tracking's auto exposure sets these cameras
++	}
++
++	bool
++	PauseVideoStream() override
++	{
++		m_paused = true;
++		return true;
++	}
++
++	bool
++	ResumeVideoStream() override
++	{
++		m_paused = false;
++		return true;
++	}
++
++	//! Undistorted (pinhole, the same focal length and centre) to distorted, both in [0, 1].
++	bool
++	GetCameraDistortion(uint32_t camera, float u, float v, float *out_u, float *out_v) override
++	{
++		if (camera >= PICO4_PASSTHROUGH_CAMS) {
++			return false;
++		}
++		const double x = (u * m_info.width - m_info.cx[camera]) / m_info.fx[camera];
++		const double y = (v * m_info.height - m_info.cy[camera]) / m_info.fy[camera];
++		const double r = sqrt(x * x + y * y);
++		double scale = 1;
++		if (r > 1e-9) {
++			const double t = atan(r), t2 = t * t;
++			const double *k = m_info.k[camera];
++			scale = t * (1 + t2 * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3])))) / r;
++		}
++		*out_u = (float)((m_info.fx[camera] * x * scale + m_info.cx[camera]) / m_info.width);
++		*out_v = (float)((m_info.fy[camera] * y * scale + m_info.cy[camera]) / m_info.height);
++		return true;
++	}
++
++	//! OpenGL's projection of the pinhole camera (x right, y up, looking along -z).
++	bool
++	GetCameraProjection(uint32_t camera,
++	                    vr::EVRTrackedCameraFrameType type,
++	                    float near_z,
++	                    float far_z,
++	                    vr::HmdMatrix44_t *out) override
++	{
++		if (camera >= PICO4_PASSTHROUGH_CAMS) {
++			return false;
++		}
++		const float w = (float)m_info.width, h = (float)m_info.height;
++		*out = {};
++		out->m[0][0] = (float)(2 * m_info.fx[camera] / w);
++		out->m[0][2] = (float)(1 - 2 * m_info.cx[camera] / w);
++		out->m[1][1] = (float)(2 * m_info.fy[camera] / h);
++		out->m[1][2] = (float)(2 * m_info.cy[camera] / h - 1);
++		out->m[2][2] = -(far_z + near_z) / (far_z - near_z);
++		out->m[2][3] = -2 * far_z * near_z / (far_z - near_z);
++		out->m[3][2] = -1;
++		return true;
++	}
++
++	bool
++	SetFrameRate(int isp_rate, int sensor_rate) override
++	{
++		return false; // the station's 50 Hz, half of it scene frames
++	}
++
++	bool
++	SetCameraVideoSinkCallback(vr::ICameraVideoSinkCallback *callback) override
++	{
++		m_sink = callback;
++		return true;
++	}
++
++	bool
++	GetCameraCompatibilityMode(vr::ECameraCompatibilityMode *mode) override
++	{
++		*mode = vr::CAMERA_COMPAT_MODE_BULK_DEFAULT;
++		return true;
++	}
++
++	bool
++	SetCameraCompatibilityMode(vr::ECameraCompatibilityMode mode) override
++	{
++		return mode == vr::CAMERA_COMPAT_MODE_BULK_DEFAULT;
++	}
++
++	bool
++	GetCameraFrameBounds(vr::EVRTrackedCameraFrameType type,
++	                     uint32_t *left,
++	                     uint32_t *top,
++	                     uint32_t *width,
++	                     uint32_t *height) override
++	{
++		*left = 0;
++		*top = 0;
++		*width = m_width;
++		*height = m_height;
++		return true;
++	}
++
++	bool
++	GetCameraIntrinsics(uint32_t camera,
++	                    vr::EVRTrackedCameraFrameType type,
++	                    vr::HmdVector2_t *focal,
++	                    vr::HmdVector2_t *center,
++	                    vr::EVRDistortionFunctionType *distortion,
++	                    double coefficients[vr::k_unMaxDistortionFunctionParameters]) override
++	{
++		if (camera >= PICO4_PASSTHROUGH_CAMS) {
++			return false;
++		}
++		focal->v[0] = (float)m_info.fx[camera];
++		focal->v[1] = (float)m_info.fy[camera];
++		center->v[0] = (float)m_info.cx[camera];
++		center->v[1] = (float)m_info.cy[camera];
++		const bool distorted = type == vr::VRTrackedCameraFrameType_Distorted;
++		*distortion = distorted ? vr::VRDistortionFunctionType_FTheta : vr::VRDistortionFunctionType_None;
++		for (uint32_t i = 0; i < vr::k_unMaxDistortionFunctionParameters; i++) {
++			coefficients[i] = distorted && i < 4 ? m_info.k[camera][i] : 0;
++		}
++		return true;
++	}
++
++	//! The camera properties of the HMD's container.
++	void
++	SetProperties(vr::PropertyContainerHandle_t props)
++	{
++		vr::CVRPropertyHelpers *p = vr::VRProperties();
++		p->SetBoolProperty(props, vr::Prop_HasCamera_Bool, true);
++		p->SetBoolProperty(props, vr::Prop_HasCameraComponent_Bool, true);
++		p->SetInt32Property(props, vr::Prop_NumCameras_Int32, PICO4_PASSTHROUGH_CAMS);
++		p->SetInt32Property(props, vr::Prop_CameraFrameLayout_Int32,
++		                    vr::EVRTrackedCameraFrameLayout_Stereo | vr::EVRTrackedCameraFrameLayout_VerticalLayout);
++		p->SetInt32Property(props, vr::Prop_CameraStreamFormat_Int32, vr::CVS_FORMAT_NV12);
++		p->SetBoolProperty(props, vr::Prop_CameraSupportsCompatibilityModes_Bool, false);
++		vr::HmdMatrix34_t to_head[PICO4_PASSTHROUGH_CAMS];
++		int32_t functions[PICO4_PASSTHROUGH_CAMS];
++		double coefficients[PICO4_PASSTHROUGH_CAMS][vr::k_unMaxDistortionFunctionParameters] = {};
++		vr::HmdVector4_t white[PICO4_PASSTHROUGH_CAMS];
++		for (int i = 0; i < PICO4_PASSTHROUGH_CAMS; i++) {
++			for (int r = 0; r < 3; r++) {
++				for (int c = 0; c < 4; c++) {
++					to_head[i].m[r][c] = (float)m_info.camera_to_head[i][r * 4 + c];
++				}
++			}
++			functions[i] = vr::VRDistortionFunctionType_FTheta;
++			for (int k = 0; k < 4; k++) {
++				coefficients[i][k] = m_info.k[i][k];
++			}
++			white[i] = {{1, 1, 1, 1}};
++		}
++		p->SetProperty(props, vr::Prop_CameraToHeadTransform_Matrix34, &to_head[0], sizeof(to_head[0]),
++		               vr::k_unHmdMatrix34PropertyTag);
++		p->SetProperty(props, vr::Prop_CameraToHeadTransforms_Matrix34_Array, to_head, sizeof(to_head),
++		               vr::k_unHmdMatrix34PropertyTag);
++		p->SetProperty(props, vr::Prop_CameraDistortionFunction_Int32_Array, functions, sizeof(functions),
++		               vr::k_unInt32PropertyTag);
++		p->SetProperty(props, vr::Prop_CameraDistortionCoefficients_Float_Array, coefficients, sizeof(coefficients),
++		               vr::k_unDoublePropertyTag);
++		p->SetProperty(props, vr::Prop_CameraWhiteBalance_Vector4_Array, white, sizeof(white),
++		               vr::k_unHmdVector4PropertyTag);
++	}
++
++private:
++	//! Each new frame into the next buffer, then SteamVR's callback.
++	void
++	Run()
++	{
++		uint64_t after = 0;
++		while (m_streaming) {
++			int index;
++			void *buffer;
++			{
++				std::lock_guard<std::mutex> lock(m_lock);
++				index = (m_latest + 1) % (int)m_buffers.size();
++				buffer = m_buffers[index];
++			}
++			struct pico4_passthrough_frame f;
++			if (!pico4_hmd_camera_frame(m_xdev, after, 100, (uint8_t *)buffer, m_width, &f)) {
++				continue;
++			}
++			after = f.sequence;
++			if (m_paused) {
++				continue;
++			}
++			vr::CameraVideoStreamFrame_t frame = {};
++			frame.m_nStreamFormat = vr::CVS_FORMAT_NV12;
++			frame.m_nWidth = m_width;
++			frame.m_nHeight = m_height;
++			frame.m_nImageDataSize = m_size;
++			frame.m_nFrameSequence = m_sequence++;
++			frame.m_nBufferIndex = (uint32_t)index;
++			frame.m_nBufferCount = (uint32_t)m_buffers.size();
++			frame.m_nExposureTime = f.exposure_us;
++			const int64_t now_ns = os_monotonic_get_ns();
++			frame.m_flFrameElapsedTime = (f.timestamp_ns - m_start_ns) / 1e9;
++			frame.m_flFrameDeliveryRate = 25;
++			frame.m_flFrameCaptureTime_DriverAbsolute = f.timestamp_ns / 1e9;
++			frame.m_flFrameCaptureTime_ServerRelative = (f.timestamp_ns - now_ns) / 1e9;
++			frame.m_nFrameCaptureTicks_ServerAbsolute = (uint64_t)f.timestamp_ns;
++			frame.m_RawTrackedDevicePose = HeadPoseAt(f.timestamp_ns);
++			frame.m_pImageData = (uint64_t)(uintptr_t)buffer;
++			{
++				std::lock_guard<std::mutex> lock(m_lock);
++				m_frames[index] = frame;
++				m_latest = index;
++			}
++			if (m_sink != nullptr) {
++				m_sink->OnCameraVideoSinkCallback();
++			}
++		}
++	}
++
++	//! The HMD's pose at the exposure, as GetPose reports it.
++	vr::TrackedDevicePose_t
++	HeadPoseAt(int64_t at_ns)
++	{
++		struct xrt_space_relation rel;
++		xrt_device_get_tracked_pose(m_xdev, XRT_INPUT_GENERIC_HEAD_POSE, at_ns, &rel);
++		struct xrt_relation_chain chain = {};
++		m_relation_chain_push_relation(&chain, &rel);
++		m_relation_chain_push_pose_if_not_identity(&chain, &m_xdev->tracking_origin->initial_offset);
++		m_relation_chain_resolve(&chain, &rel);
++		vr::TrackedDevicePose_t pose = {};
++		create_translation_rotation_matrix(&rel.pose, &pose.mDeviceToAbsoluteTracking);
++		pose.vVelocity = {{rel.linear_velocity.x, rel.linear_velocity.y, rel.linear_velocity.z}};
++		pose.vAngularVelocity = {{rel.angular_velocity.x, rel.angular_velocity.y, rel.angular_velocity.z}};
++		pose.eTrackingResult = vr::TrackingResult_Running_OK;
++		pose.bPoseIsValid = (rel.relation_flags & XRT_SPACE_RELATION_ORIENTATION_VALID_BIT) != 0;
++		pose.bDeviceIsConnected = true;
++		return pose;
++	}
++
++	struct xrt_device *m_xdev;
++	struct pico4_passthrough_info m_info;
++	const uint32_t m_width, m_height, m_size;
++	std::mutex m_lock;
++	std::vector<void *> m_buffers;
++	std::vector<vr::CameraVideoStreamFrame_t> m_frames;
++	int m_latest = -1;
++	vr::ICameraVideoSinkCallback *m_sink = nullptr;
++	std::thread m_thread;
++	std::atomic<bool> m_streaming{false}, m_paused{false};
++	uint32_t m_sequence = 0;
++	int64_t m_start_ns = 0;
++	IVRBlockQueue005 *m_queues = nullptr;
++	vr::PropertyContainerHandle_t m_mesh_queue[2] = {0, 0};
++};
++
++/*!
+  * SteamVR's battery properties from the device's battery status, at most every five
+  * seconds; a device without a battery (the default implementation) sets none.
+  */
+@@ -1269,6 +1720,21 @@
+ 	ovrd_log("Stopping HMD pose update thread\n");
+ }
+ 
++//! The camera component, made on first use: vrserver may ask for it before Activate.
++CCameraComponent_Monado *
++CDeviceDriver_Monado::Camera()
++{
++	if (!m_camera_probed) {
++		m_camera_probed = true;
++		struct pico4_passthrough_info info;
++		if (pico4_hmd_camera_info != NULL && pico4_hmd_camera_info(m_xdev, &info)) {
++			m_camera = new CCameraComponent_Monado(m_xdev, info);
++			ovrd_log("Camera: %d cameras, %ux%u each\n", PICO4_PASSTHROUGH_CAMS, info.width, info.height);
++		}
++	}
++	return m_camera;
++}
++
+ vr::EVRInitError
+ CDeviceDriver_Monado::Activate(vr::TrackedDeviceIndex_t unObjectId)
+ {
+@@ -1300,6 +1766,12 @@
+ 		vr::VRDriverInput()->CreateBooleanComponent(m_ulPropertyContainer, "/proximity", &m_proximity);
+ 	}
+ 
++	// SteamVR's camera (room view) from the forward tracking cameras.
++	if (Camera() != NULL) {
++		m_camera->SetProperties(m_ulPropertyContainer);
++		m_camera->CreateMeshQueues();
++	}
++
+ 	// avoid "not fullscreen" warnings from vrmonitor
+ 	//vr::VRProperties()->SetBoolProperty(m_ulPropertyContainer, vr::Prop_IsOnDesktop_Bool, false);
+ 
+@@ -1329,6 +1801,9 @@
+ {
+ 	m_poseUpdating = false;
+ 	m_poseUpdateThread->join();
++	if (m_camera != NULL) {
++		m_camera->StopVideoStream();
++	}
+ 	ovrd_log("Deactivate\n");
+ }
+ 
+@@ -1346,6 +1821,10 @@
+ 	    strcmp(pchComponentNameAndVersion, vr::IVRDisplayComponent_Version3) == 0) {
+ 		return (vr::IVRDisplayComponent *)this;
+ 	}
++	if (strcmp(pchComponentNameAndVersion, vr::IVRCameraComponent_Version) == 0 && Camera() != NULL) {
++		return (vr::IVRCameraComponent *)m_camera;
++	}
++	ovrd_log("Component %s: none\n", pchComponentNameAndVersion);
+ 	// clang-format on
+ 
+ 	return NULL;

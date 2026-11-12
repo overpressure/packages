@@ -1,0 +1,141 @@
+SLAM tracker: stale poses, accelerometer noise, raw poses for drivers.
+
+When the SLAM system stops producing poses, prediction extrapolated from
+the last one without bound (on the PICO 4: the view kept rotating). Poses
+requested more than 500 ms after the newest SLAM pose are now untracked,
+so the device driver can fall back to its own tracking.
+
+SLAM_PRED_ACCEL_GYRO adds the mean acceleration since the newest SLAM pose to
+its velocity. At rest that is bias and gravity residue, and the time it is
+scaled by saws with every SLAM pose, so a still view shimmered. Accelerations
+are now shrunk by SLAM_ACCEL_DEADBAND (default 0.3 m/s^2), continuously.
+
+The relations keep the VIT system's velocity estimate (Basalt's) instead of
+the difference of two poses. t_slam_get_latest_pose() hands a driver the
+newest pose with the time of its images, so that it can fuse the poses with
+its IMU itself; flush_poses() is serialised for that second caller.
+t_slam_reset() lets the driver restart a SLAM system that ran away.
+
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -86,6 +86,7 @@
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_submit_from_start, "SLAM_SUBMIT_FROM_START", false)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_openvr_groundtruth_device, "SLAM_OPENVR_GROUNDTRUTH_DEVICE", 0)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_prediction_type, "SLAM_PREDICTION_TYPE", long(SLAM_PRED_DEAD_RECKONING))
++DEBUG_GET_ONCE_FLOAT_OPTION(slam_accel_deadband, "SLAM_ACCEL_DEADBAND", 0.3f)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_write_csvs, "SLAM_WRITE_CSVS", false)
+ DEBUG_GET_ONCE_OPTION(slam_csv_path, "SLAM_CSV_PATH", "evaluation/")
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_timing_stat, "SLAM_TIMING_STAT", true)
+@@ -294,6 +295,7 @@
+ 	t_slam_prediction_type pred_type;
+ 	u_var_combo pred_combo;         //!< UI combo box to select @ref pred_type
+ 	RelationHistory slam_rels{};    //!< A history of relations produced purely from external SLAM tracker data
++	std::mutex flush_lock;          //!< flush_poses() runs on the frame and the pose callers' threads
+ 	int dbg_pred_every = 1;         //!< Skip X SLAM poses so that you get tracked mostly by the prediction algo
+ 	int dbg_pred_counter = 0;       //!< SLAM pose counter for prediction debugging
+ 	struct os_mutex lock_ff;        //!< Lock for gyro_ff and accel_ff.
+@@ -740,6 +742,7 @@
+ static bool
+ flush_poses(TrackerSlam &t)
+ {
++	std::lock_guard<std::mutex> flush_guard(t.flush_lock);
+ 
+ 	vit_pose_t *pose = NULL;
+ 	vit_result_t vres = t.vit.tracker_pop_pose(t.tracker, &pose);
+@@ -778,12 +781,14 @@
+ 		SLAM_TRACE("Dequeued SLAM pose ts=%ld p=[%f,%f,%f] r=[%f,%f,%f,%f]", //
+ 		           nts, data.px, data.py, data.pz, data.ox, data.oy, data.oz, data.ow);
+ 
+-		// TODO linear velocity from the VIT system
+ 		// Compute new relation based on new pose and velocities since last pose
+ 		xrt_space_relation rel{};
+ 		rel.relation_flags = XRT_SPACE_RELATION_BITMASK_ALL;
+ 		rel.pose = {nrot, npos};
+-		rel.linear_velocity = (npos - lpos) / dt;
++		// The VIT system's own velocity estimate (Basalt's), zero included: the difference
++		// of two poses 40 ms apart carries their noise many times over.
++		(void)lpos;
++		rel.linear_velocity = xrt_vec3{data.vx, data.vy, data.vz};
+ 		math_quat_finite_difference(&lrot, &nrot, dt, &rel.angular_velocity);
+ 
+ 		// Push to relationship history unless we are debugging prediction
+@@ -827,6 +832,13 @@
+ 
+ 	// Stop if there is no previous relation to use for prediction
+ 	if (empty) {
++		out_relation->relation_flags = XRT_SPACE_RELATION_BITMASK_NONE;
++		return;
++	}
++
++	// A SLAM pose this old means the tracker has stopped producing poses; predicting
++	// from it runs away without bound. Report the pose as untracked instead.
++	if (when_ns - (int64_t)rel_ts > 500 * 1000 * 1000) {
+ 		out_relation->relation_flags = XRT_SPACE_RELATION_BITMASK_NONE;
+ 		return;
+ 	}
+@@ -877,6 +889,11 @@
+ 		xrt_vec3 world_accel{};
+ 		math_quat_rotate_vec3(&rel.pose.orientation, &avg_accel, &world_accel);
+ 		world_accel += t.gravity_correction;
++		// At rest the mean acceleration is bias and gravity residue, scaled below by a time
++		// that saws with every SLAM pose: a still view shimmered. Shrink it softly.
++		float accel = m_vec3_len(world_accel);
++		float deadband = debug_get_float_option_slam_accel_deadband();
++		world_accel = accel > deadband ? world_accel * ((accel - deadband) / accel) : xrt_vec3{0, 0, 0};
+ 		double slam_to_imu_dt = time_ns_to_s(t.last_imu_ts - rel_ts);
+ 		rel.linear_velocity += world_accel * slam_to_imu_dt;
+ 	}
+@@ -1174,6 +1191,25 @@
+ 
+ 	if (t.gt.override_tracking) {
+ 		out_relation->pose = gt2xr_pose(t.gt.origin, get_gt_pose_at(*t.gt.trajectory, when_ns));
++	}
++}
++
++//! The newest SLAM pose, at the time of its images, without prediction or filtering.
++extern "C" bool
++t_slam_get_latest_pose(struct xrt_tracked_slam *xts, int64_t *out_ts_ns, struct xrt_space_relation *out_relation)
++{
++	auto &t = *container_of(xts, TrackerSlam, base);
++	flush_poses(t);
++	return t.slam_rels.get_latest(out_ts_ns, out_relation);
++}
++
++//! Asks the SLAM system to start a new map, as the debug UI's reset button does.
++extern "C" void
++t_slam_reset(struct xrt_tracked_slam *xts)
++{
++	auto &t = *container_of(xts, TrackerSlam, base);
++	if (t.vit.tracker_reset(t.tracker) != VIT_SUCCESS) {
++		SLAM_WARN("Failed to reset VIT tracker");
+ 	}
+ }
+ 
+--- a/src/xrt/auxiliary/tracking/t_tracking.h
++++ b/src/xrt/auxiliary/tracking/t_tracking.h
+@@ -699,6 +699,25 @@
+ int
+ t_slam_start(struct xrt_tracked_slam *xts);
+ 
++/*!
++ * The newest pose the SLAM system reported, at the time its images were taken
++ * (@p out_ts_ns), with the system's own velocity estimate if it gives one;
++ * for a driver that fuses the poses itself. False before the first pose.
++ *
++ * @public @memberof xrt_tracked_slam
++ */
++bool
++t_slam_get_latest_pose(struct xrt_tracked_slam *xts, int64_t *out_ts_ns, struct xrt_space_relation *out_relation);
++
++/*!
++ * Asks the SLAM system to drop its state and start a new map, for a driver
++ * that found it running away. The new map has its own origin and heading.
++ *
++ * @public @memberof xrt_tracked_slam
++ */
++void
++t_slam_reset(struct xrt_tracked_slam *xts);
++
+ /*
+  *
+  * Camera calibration

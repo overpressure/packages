@@ -1,0 +1,75 @@
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -373,6 +373,11 @@
+ 	flexion_joints_to_bone_transform(&hand_joint_set, out_bone_transforms, hand);
+ }
+ 
++static void
++update_battery(struct xrt_device *xdev,
++               vr::PropertyContainerHandle_t props,
++               std::chrono::steady_clock::time_point *next);
++
+ class CDeviceDriver_Monado_Controller : public vr::ITrackedDeviceServerDriver
+ {
+ public:
+@@ -741,6 +746,7 @@
+ 	{
+ 		ovrd_log("Starting controller pose update thread for %s\n", m_xdev->str);
+ 
++		std::chrono::steady_clock::time_point battery_at{};
+ 		while (m_poseUpdating) {
+ 			//! @todo figure out the best pose update rate
+ 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+@@ -748,6 +754,7 @@
+ 			if (m_unObjectId != vr::k_unTrackedDeviceIndexInvalid) {
+ 				vr::VRServerDriverHost()->TrackedDevicePoseUpdated(m_unObjectId, GetPose(),
+ 				                                                   sizeof(vr::DriverPose_t));
++				update_battery(m_xdev, m_ulPropertyContainer, &battery_at);
+ 			}
+ 		}
+ 
+@@ -1212,16 +1219,44 @@
+ 	res->m[2][3] = t.z;
+ }
+ 
++/*!
++ * SteamVR's battery properties from the device's battery status, at most every five
++ * seconds; a device without a battery (the default implementation) sets none.
++ */
++static void
++update_battery(struct xrt_device *xdev,
++               vr::PropertyContainerHandle_t props,
++               std::chrono::steady_clock::time_point *next)
++{
++	auto now = std::chrono::steady_clock::now();
++	if (now < *next) {
++		return;
++	}
++	*next = now + std::chrono::seconds(5);
++
++	bool present = false;
++	bool charging = false;
++	float charge = 0.f;
++	if (xrt_device_get_battery_status(xdev, &present, &charging, &charge) != XRT_SUCCESS || !present) {
++		return;
++	}
++	vr::VRProperties()->SetBoolProperty(props, vr::Prop_DeviceProvidesBatteryStatus_Bool, true);
++	vr::VRProperties()->SetFloatProperty(props, vr::Prop_DeviceBatteryPercentage_Float, charge);
++	vr::VRProperties()->SetBoolProperty(props, vr::Prop_DeviceIsCharging_Bool, charging);
++}
++
+ void
+ CDeviceDriver_Monado::PoseUpdateThreadFunction()
+ {
+ 	ovrd_log("Starting HMD pose update thread\n");
+ 
++	std::chrono::steady_clock::time_point battery_at{};
+ 	while (m_poseUpdating) {
+ 		//! @todo figure out the best pose update rate
+ 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+ 		vr::VRServerDriverHost()->TrackedDevicePoseUpdated(m_trackedDeviceIndex, GetPose(),
+ 		                                                   sizeof(vr::DriverPose_t));
++		update_battery(m_xdev, m_ulPropertyContainer, &battery_at);
+ 	}
+ 	ovrd_log("Stopping HMD pose update thread\n");
+ }

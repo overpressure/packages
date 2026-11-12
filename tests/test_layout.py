@@ -101,6 +101,17 @@ class Definitions(unittest.TestCase):
                 self.assertNotIn(b"\r\n", (ROOT / name).read_bytes(), name)
 
 
+class Licenses(unittest.TestCase):
+    CODE = (".c", ".cpp", ".h", ".hpp", ".sh", ".py")
+
+    def test_code_names_its_license(self) -> None:
+        run = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True)  # noqa: S607
+        for name in filter(None, run.stdout.decode().split("\0")):
+            if name.endswith(self.CODE) and Path(name).name != "__init__.py":
+                head = (ROOT / name).read_text(encoding="utf-8").splitlines()[:5]
+                self.assertTrue(any("SPDX-License-Identifier:" in line for line in head), name)
+
+
 @unittest.skipUnless(bash(), "needs bash")
 class Recipes(unittest.TestCase):
     def test_name_and_local_sources(self) -> None:

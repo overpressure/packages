@@ -12,13 +12,15 @@ image, so that an image's build downloads them instead of compiling them.
 | --- | --- | --- |
 | `common/` | packages for Valve's Frame userspace on any headset: GTK 2, MangoHud, gamescope, PipeWire's ALSA plugin, libdisplay-info 0.1 | `overpressure-*` |
 | `sm8250/` | packages for the Snapdragon XR2 (SM8250): hexagonrpc, the DSPs' file server | `sm8250-*` |
-| `phoenix/` | packages for the PICO 4: Basalt with the PICO 4's settings | `pico4-*` |
+| `phoenix/` | packages for the PICO 4: Monado with the PICO 4's driver and its tools, Basalt with the PICO 4's settings, the compositor's swapchain layer, Steam Link's controller shim, the graphics test | `pico4-*` |
 | `headsets/<codename>/` | a headset's image definition: `layers`, `pacman.conf`, `packages.txt`, `packages.lock` | |
 | `build/packages.sh`, `build/plan.py` | the build of a headset's packages; the jobs and cache keys CI builds them with | |
 | `tests/` | the checks of the layout and of the build plan | |
 
-Each folder in a layer is one recipe, a `PKGBUILD` with the files it installs or applies beside it. A
-recipe pins its upstream by version and hash or by commit.
+Each folder in a layer is one recipe, a `PKGBUILD` with the files it builds, installs or applies beside
+it, the project's own code among them; a code package's unit tests run in its `build()`. A recipe pins
+its upstream by version and hash or by commit, and its local files by hash: `python3 build/sums.py
+LAYER/RECIPE` writes those after a change.
 
 ## Image definitions
 

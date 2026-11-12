@@ -1,0 +1,17 @@
+{
+    "file_format_version": "1.1.2",
+    "layer": {
+        "name": "VK_LAYER_PICO4_swapchain_usage",
+        "type": "GLOBAL",
+        "library_path": "/usr/lib/libVkLayer_PICO4_swapchain_usage.so",
+        "api_version": "1.3.0",
+        "implementation_version": "1",
+        "description": "SteamVR's compositor's swapchains without the storage usage it never uses",
+        "functions": {
+            "vkNegotiateLoaderLayerInterfaceVersion": "pico4_swapchain_usage_negotiate"
+        },
+        "disable_environment": {
+            "PICO4_SWAPCHAIN_USAGE_DISABLE": "1"
+        }
+    }
+}

@@ -1,0 +1,18 @@
+diff --git a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+index bb8796711..65b95cb05 100644
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -2052,6 +2052,13 @@ CDeviceDriver_Monado::Activate(vr::TrackedDeviceIndex_t unObjectId)
+ 	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_UserIpdMeters_Float, m_flIPD);
+ 	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_UserHeadToEyeDepthMeters_Float, 0.f);
+ 	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_DisplayFrequency_Float, m_flDisplayFrequency);
++	// The refresh rates the panels run, which SteamVR's settings offer. Its Steam Link client sends
++	// them to the PC, which streams only once it has a rate of at least 70 Hz
++	// (docs/session.md#steam-link).
++	vr::VRProperties()->SetBoolProperty(m_ulPropertyContainer, vr::Prop_DisplaySupportsRuntimeFramerateChange_Bool, true);
++	float rates[] = {72.f, 90.f};
++	vr::VRProperties()->SetProperty(m_ulPropertyContainer, vr::Prop_DisplayAvailableFrameRates_Float_Array, rates,
++	                                sizeof(rates), vr::k_unFloatPropertyTag);
+ 	vr::VRProperties()->SetFloatProperty( m_ulPropertyContainer, vr::Prop_SecondsFromVsyncToPhotons_Float, m_flSecondsFromVsyncToPhotons);
+ 
+ 	// return a constant that's not 0 (invalid) or 1 (reserved for Oculus)

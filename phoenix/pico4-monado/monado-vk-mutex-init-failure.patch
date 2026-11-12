@@ -1,0 +1,15 @@
+--- a/src/xrt/auxiliary/vk/vk_bundle_init.c
++++ b/src/xrt/auxiliary/vk/vk_bundle_init.c
+@@ -1646,6 +1646,12 @@
+ 
+ 	for (uint32_t i = 0; i < ARRAY_SIZE(vk->queues); ++i) {
+ 		struct vk_bundle_queue *q = &vk->queues[i];
++#ifndef NDEBUG
++		// A compositor whose init failed before Vulkan never initialised them.
++		if (!q->mutex.initialized) {
++			continue;
++		}
++#endif
+ 		os_mutex_destroy(&q->mutex);
+ 		q->mutex = (struct os_mutex){0};
+ 	}

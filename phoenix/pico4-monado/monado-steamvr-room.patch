@@ -1,0 +1,97 @@
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -56,6 +56,10 @@
+ extern "C" bool
+ pico4_hmd_get_presence(struct xrt_device *xdev, bool *out_worn) __attribute__((weak));
+ 
++// The tracking universe of the PICO 4's room, one per tracker map (pico4_interface.h); weak as above.
++extern "C" bool
++pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe) __attribute__((weak));
++
+ // SteamVR's camera from the PICO 4's forward tracking cameras (pico4_interface.h); weak as above.
+ #include "../../drivers/pico4/pico4_passthrough.h"
+ extern "C" bool
+@@ -1217,6 +1221,11 @@
+ 	vr::VRInputComponentHandle_t m_proximity = vr::k_ulInvalidInputComponentHandle;
+ 	int m_worn = -1;
+ 
++	//! The universe switched to last.
++	uint64_t m_universe = 2;
++	//! vrserver's chaperone server (IVRChaperoneServerDriver_XXX), which keeps the universes.
++	void *m_chaperone_server = nullptr;
++
+ 	//! SteamVR's camera, when the HMD has one (the PICO 4's forward tracking cameras).
+ 	CCameraComponent_Monado *m_camera = NULL;
+ 	bool m_camera_probed = false;
+@@ -1703,6 +1712,7 @@
+ 	ovrd_log("Starting HMD pose update thread\n");
+ 
+ 	std::chrono::steady_clock::time_point battery_at{};
++	std::chrono::steady_clock::time_point universe_at{};
+ 	while (m_poseUpdating) {
+ 		//! @todo figure out the best pose update rate
+ 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+@@ -1716,6 +1726,46 @@
+ 			m_worn = worn;
+ 			ovrd_log("Headset %s\n", worn ? "worn" : "taken off");
+ 		}
++		// The room's universe once the tracker knows the room: SteamVR keeps a play area per universe.
++		// As the Frame's driver (docs/xr.md#room-setup): vrserver's chaperone server restores a known
++		// universe (slot 1) or creates a new one whose room setup is still to do (slot 0, keeping the
++		// origins), and reports it as the HMD's Prop_CurrentUniverseId_Uint64 itself.
++		uint64_t universe = 0;
++		if (pico4_hmd_get_universe != NULL && std::chrono::steady_clock::now() >= universe_at) {
++			universe_at = std::chrono::steady_clock::now() + std::chrono::seconds(1);
++			if (pico4_hmd_get_universe(m_xdev, &universe) && universe != m_universe) {
++				if (m_chaperone_server == nullptr) {
++					vr::EVRInitError err = vr::VRInitError_None;
++					m_chaperone_server =
++					    vr::VRDriverContext()->GetGenericInterface("IVRChaperoneServerDriver_XXX", &err);
++				}
++				if (m_chaperone_server != nullptr) {
++					using create_fn = void (*)(void *self, uint64_t universe, bool keep_origins);
++					using restore_fn = bool (*)(void *self, uint64_t universe,
++					                            const vr::HmdMatrix34_t *persistent_map_from_map, bool refine);
++					void **vtable = *(void ***)m_chaperone_server;
++					const vr::HmdMatrix34_t identity = {{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}}};
++					const bool known = ((restore_fn)vtable[1])(m_chaperone_server, universe, &identity, false);
++					// A new room's universe waits for a wearer. A headset started on a table
++					// can miss the tracker's 8 s to relocalise, and finds its saved room after
++					// that: each such start would leave a universe behind in SteamVR's file.
++					if (!known && m_worn != 1) {
++						continue;
++					}
++					if (!known) {
++						((create_fn)vtable[0])(m_chaperone_server, universe, true);
++					}
++					ovrd_log("Tracking universe %llu (the room's), %s\n", (unsigned long long)universe,
++					         known ? "restored" : "new: room setup to do");
++				} else {
++					vr::VRProperties()->SetUint64Property(m_ulPropertyContainer,
++					                                      vr::Prop_CurrentUniverseId_Uint64, universe);
++					ovrd_log("Tracking universe %llu (the room's), no chaperone server\n",
++					         (unsigned long long)universe);
++				}
++				m_universe = universe;
++			}
++		}
+ 	}
+ 	ovrd_log("Stopping HMD pose update thread\n");
+ }
+@@ -1766,6 +1810,16 @@
+ 		vr::VRDriverInput()->CreateBooleanComponent(m_ulPropertyContainer, "/proximity", &m_proximity);
+ 	}
+
++	// SteamVR's dashboard offers the room setup in the headset (floor, play area) only to an HMD
++	// that reports Prop_SupportsInHMDRoomSetup_Bool (11003), as the Frame's driver does; the
++	// bundled openvr_driver.h predates its name.
++	vr::VRProperties()->SetBoolProperty(m_ulPropertyContainer, static_cast<vr::ETrackedDeviceProperty>(11003), true);
++	// Its steps past the recenter (floor height, full playspace setup) also need
++	// Prop_VRLinkClientHMDSupportsRoomSetupRequests_Bool (11004): without it the dashboard drops
++	// them ("HMD doesnt support setRoomSetupStep"). Away from a VR Link server they run in
++	// SteamVR itself.
++	vr::VRProperties()->SetBoolProperty(m_ulPropertyContainer, static_cast<vr::ETrackedDeviceProperty>(11004), true);
++
+ 	// SteamVR's camera (room view) from the forward tracking cameras.
+ 	if (Camera() != NULL) {
+ 		m_camera->SetProperties(m_ulPropertyContainer);

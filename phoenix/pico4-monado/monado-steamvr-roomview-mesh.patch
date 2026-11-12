@@ -1,0 +1,316 @@
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -18,6 +18,7 @@
+ #include <mutex>
+ #include <thread>
+ #include <vector>
++#include <unistd.h>
+ 
+ #include "math/m_api.h"
+ #include "ovrd_log.hpp"
+@@ -73,6 +74,12 @@ pico4_hmd_camera_frame(struct xrt_device *xdev,
+                        uint8_t *y,
+                        uint32_t stride,
+                        struct pico4_passthrough_frame *out) __attribute__((weak));
++extern "C" bool
++pico4_hmd_depth_mesh(struct xrt_device *xdev,
++                     uint64_t after,
++                     float *vertices,
++                     uint32_t *indices,
++                     struct pico4_depth_mesh_info *out) __attribute__((weak));
+ 
+ #if defined(__GNUC__)
+ #pragma GCC diagnostic push
+@@ -1308,6 +1315,53 @@ public:
+ 	Connect(vr::PropertyContainerHandle_t *queue, const char *path) = 0;
+ 	virtual int
+ 	Destroy(vr::PropertyContainerHandle_t queue) = 0;
++	virtual int
++	AcquireWriteOnlyBlock(vr::PropertyContainerHandle_t queue, vr::PropertyContainerHandle_t *block, void **buffer) = 0;
++	virtual int
++	ReleaseWriteOnlyBlock(vr::PropertyContainerHandle_t queue, vr::PropertyContainerHandle_t block) = 0;
++};
++
++/*!
++ * SteamVR's path properties (IVRPaths_001, public in the OpenVR SDK, not in Monado's driver
++ * header): typed values under a path on a property container, here a block queue or one of its
++ * blocks. The compositor reads the room view's depth mesh this way.
++ */
++struct PathWrite001
++{
++	uint64_t path;   //!< A path handle, or 0 to use @ref name.
++	int32_t write_type; //!< 0: set.
++	int32_t set_error;
++	const void *buffer;
++	uint32_t size;
++	uint32_t tag; //!< vr::k_un*PropertyTag.
++	int32_t error;
++	const char *name;
++};
++
++//! One typed read under a path (vr::PathRead_t of the OpenVR SDK).
++struct PathRead001
++{
++	uint64_t path;
++	void *buffer;
++	uint32_t size;
++	uint32_t tag;           //!< The value's vr::k_un*PropertyTag.
++	uint32_t required_size;
++	int32_t error;
++	const char *name;
++};
++
++//! The container SteamVR's chaperone paths are read from (driver_cv, vrserver, the compositor).
++static constexpr vr::PropertyContainerHandle_t kChaperoneRoot = 0x0000000600000003ull;
++
++class IVRPaths001
++{
++public:
++	virtual int
++	ReadPathBatch(vr::PropertyContainerHandle_t root, void *batch, uint32_t count) = 0;
++	virtual int
++	WritePathBatch(vr::PropertyContainerHandle_t root, PathWrite001 *batch, uint32_t count) = 0;
++	virtual int
++	StringToHandle(uint64_t *handle, const char *path) = 0;
+ };
+ 
+ /*!
+@@ -1329,10 +1383,28 @@ public:
+ 	}
+ 
+ 	/*!
+-	 * The room view's depth-mesh queues, which Valve's XR service provides on the Frame:
+-	 * vrcompositor starts its room view only when it can connect to both, and reads them only
+-	 * with depth projection and a mesh marked up to date, so they stay empty here.
++	 * The room view's depth mesh, as Valve's XR service provides it on the Frame in two block
++	 * queues (docs/xr.md#passthrough): vrcompositor starts its room view only when it can connect
++	 * to both, and with depth projection (Prop_SupportsRoomViewDepthProjection_Bool) places the
++	 * camera image on the mesh. The mesh is PICO OS's see-through depth mesh from the PICO 4
++	 * driver, published per mesh as the Frame publishes its own: the layout block (uint32 triangle
++	 * indices; layoutId, vertexCount, indexCount), then the data block (float x, y, z; meshId,
++	 * layoutId, elementCount = 3 per vertex, rawFromMeshPose, posePredictionBaseTime), then the
++	 * queue's meshIsUpToDate. The compositor draws everything in raw tracking space: the mesh at
++	 * rawFromMeshPose, each camera image from the camera's raw pose at its exposure (the frames'
++	 * metadata), the eyes at the render pose. So rawFromMeshPose is the mesh's own raw pose and
++	 * posePredictionBaseTime its pair's time. The queues as the Frame's driver creates them (one
++	 * block size for both, 512-byte headers for the path properties, 4 data and 2 layout blocks),
++	 * but without its flag 1 (owner is reader): here the owner writes.
+ 	 */
++	static bool
++	DepthMeshSupported()
++	{
++		// Where the image carries PICO OS's pipeline. Told the HMD projects onto a mesh, a compositor
++		// that never gets one draws black instead of the cameras.
++		return pico4_hmd_depth_mesh != NULL && ::access("/usr/lib/pico4-stock-slam/system/lib64/libphotoid.so", F_OK) == 0;
++	}
++
+ 	void
+ 	CreateMeshQueues()
+ 	{
+@@ -1342,19 +1414,42 @@ public:
+ 			ovrd_log("Camera: no IVRBlockQueue_005 (%d)\n", (int)err);
+ 			return;
+ 		}
++		const bool mesh = DepthMeshSupported();
++		if (mesh) {
++			m_paths = (IVRPaths001 *)vr::VRDriverContext()->GetGenericInterface("IVRPaths_001", &err);
++		}
++		const uint32_t size = mesh ? kMeshBlockSize : 16;
+ 		static const char *const paths[2] = {"/xrservice/roomview3d/meshData", "/xrservice/roomview3d/meshLayout"};
++		// A block's path properties live in its header: 16 bytes (the minimum) holds none of them.
+ 		for (int i = 0; i < 2; i++) {
+-			int r = m_queues->Create(&m_mesh_queue[i], paths[i], 16, 16, 1, 0);
++			int r = m_queues->Create(&m_mesh_queue[i], paths[i], size, mesh ? 512 : 16, mesh ? (i == 0 ? 4 : 2) : 1, 0);
+ 			ovrd_log("Camera: block queue %s: %s (%d)\n", paths[i], r == 0 ? "created" : "not created", r);
+ 			if (r != 0) {
+ 				m_mesh_queue[i] = 0;
+ 			}
+ 		}
++		if (!mesh) {
++			return;
++		}
++		if (m_paths == nullptr || m_mesh_queue[0] == 0 || m_mesh_queue[1] == 0) {
++			ovrd_log("Camera: no depth mesh (paths %p)\n", (void *)m_paths);
++			return;
++		}
++		const int32_t block_size = (int32_t)size;
++		PathWrite001 size_path = {0, 0, 0, &block_size, sizeof(block_size), vr::k_unInt32PropertyTag, 0,
++		                          "/meshData/blockDataSize"};
++		WritePaths(m_mesh_queue[0], &size_path, 1);
++		m_meshing = true;
++		m_mesh_thread = std::thread(&CCameraComponent_Monado::MeshRun, this);
+ 	}
+ 
+ 	void
+ 	DestroyMeshQueues()
+ 	{
++		m_meshing = false;
++		if (m_mesh_thread.joinable()) {
++			m_mesh_thread.join();
++		}
+ 		for (int i = 0; i < 2; i++) {
+ 			if (m_queues != nullptr && m_mesh_queue[i] != 0) {
+ 				m_queues->Destroy(m_mesh_queue[i]);
+@@ -1632,6 +1727,11 @@ public:
+ 		               vr::k_unDoublePropertyTag);
+ 		p->SetProperty(props, vr::Prop_CameraWhiteBalance_Vector4_Array, white, sizeof(white),
+ 		               vr::k_unHmdVector4PropertyTag);
++		// The 3D room view: the compositor projects the camera image onto the depth mesh
++		// (Prop_SupportsRoomViewDepthProjection_Bool; the bundled openvr_driver.h predates its name).
++		if (DepthMeshSupported()) {
++			p->SetBoolProperty(props, static_cast<vr::ETrackedDeviceProperty>(2079), true);
++		}
+ 	}
+ 
+ private:
+@@ -1684,6 +1784,134 @@ private:
+ 		}
+ 	}
+ 
++	//! Typed values under paths on @p root (a queue or a block); false if any was refused.
++	bool
++	WritePaths(vr::PropertyContainerHandle_t root, PathWrite001 *batch, uint32_t count)
++	{
++		for (uint32_t i = 0; i < count; i++) {
++			m_paths->StringToHandle(&batch[i].path, batch[i].name);
++		}
++		int r = m_paths->WritePathBatch(root, batch, count);
++		bool ok = r == 0;
++		for (uint32_t i = 0; i < count; i++) {
++			ok = ok && batch[i].error == 0 && batch[i].set_error == 0;
++		}
++		if (!ok && !m_mesh_error_logged) {
++			m_mesh_error_logged = true;
++			for (uint32_t i = 0; i < count; i++) {
++				ovrd_log("Camera: depth mesh: %s: batch %d, error %d/%d\n", batch[i].name, r, batch[i].error,
++				         batch[i].set_error);
++			}
++		}
++		return ok;
++	}
++
++	//! A CLOCK_MONOTONIC time on the compositor's clock: CLOCK_MONOTONIC_RAW seconds.
++	static double
++	CompositorSeconds(int64_t monotonic_ns)
++	{
++		struct timespec raw;
++		clock_gettime(CLOCK_MONOTONIC_RAW, &raw);
++		return raw.tv_sec + raw.tv_nsec / 1e9 - (double)(os_monotonic_get_ns() - monotonic_ns) / 1e9;
++	}
++
++	//! The triangles of layout @p id: the compositor keeps them until a new layoutId.
++	bool
++	WriteLayout(uint64_t id, int32_t vertex_count, const std::vector<uint32_t> &indices)
++	{
++		vr::PropertyContainerHandle_t block = 0;
++		void *buffer = nullptr;
++		if (m_queues->AcquireWriteOnlyBlock(m_mesh_queue[1], &block, &buffer) != 0 || buffer == nullptr) {
++			return false;
++		}
++		memcpy(buffer, indices.data(), indices.size() * sizeof(uint32_t));
++		const int32_t index_count = (int32_t)indices.size();
++		PathWrite001 batch[3] = {
++		    {0, 0, 0, &id, sizeof(id), vr::k_unUint64PropertyTag, 0, "/meshLayout/layoutId"},
++		    {0, 0, 0, &vertex_count, sizeof(vertex_count), vr::k_unInt32PropertyTag, 0, "/meshLayout/vertexCount"},
++		    {0, 0, 0, &index_count, sizeof(index_count), vr::k_unInt32PropertyTag, 0, "/meshLayout/indexCount"},
++		};
++		bool ok = WritePaths(block, batch, 3);
++		m_queues->ReleaseWriteOnlyBlock(m_mesh_queue[1], block);
++		return ok;
++	}
++
++	//! One mesh's vertices with its raw pose, time and layout, then the queue's meshIsUpToDate.
++	bool
++	WriteMesh(const struct pico4_depth_mesh_info &info, const std::vector<float> &vertices, uint64_t layout)
++	{
++		vr::PropertyContainerHandle_t block = 0;
++		void *buffer = nullptr;
++		if (m_queues->AcquireWriteOnlyBlock(m_mesh_queue[0], &block, &buffer) != 0 || buffer == nullptr) {
++			return false;
++		}
++		memcpy(buffer, vertices.data(), (size_t)info.vertex_count * 3 * sizeof(float));
++		vr::HmdMatrix34_t raw_from_mesh;
++		for (int r = 0; r < 3; r++) {
++			for (int c = 0; c < 4; c++) {
++				raw_from_mesh.m[r][c] = (float)info.tracking_from_mesh[4 * r + c];
++			}
++		}
++		// The pair's time on the compositor's clock, as the frames' times.
++		const double time = CompositorSeconds(info.timestamp_ns);
++		const int32_t elements = (int32_t)info.vertex_count * 3;
++		const uint64_t id = ++m_mesh_id;
++		PathWrite001 batch[5] = {
++		    {0, 0, 0, &time, sizeof(time), vr::k_unDoublePropertyTag, 0, "/meshData/posePredictionBaseTime"},
++		    {0, 0, 0, &elements, sizeof(elements), vr::k_unInt32PropertyTag, 0, "/meshData/elementCount"},
++		    {0, 0, 0, &id, sizeof(id), vr::k_unUint64PropertyTag, 0, "/meshData/meshId"},
++		    {0, 0, 0, &layout, sizeof(layout), vr::k_unUint64PropertyTag, 0, "/meshData/layoutId"},
++		    {0, 0, 0, &raw_from_mesh, sizeof(raw_from_mesh), vr::k_unHmdMatrix34PropertyTag, 0,
++		     "/meshData/rawFromMeshPose"},
++		};
++		bool ok = WritePaths(block, batch, 5);
++		m_queues->ReleaseWriteOnlyBlock(m_mesh_queue[0], block);
++		const bool up_to_date = true;
++		PathWrite001 flag = {0, 0, 0, &up_to_date, sizeof(up_to_date), vr::k_unBoolPropertyTag, 0,
++		                     "/meshData/meshIsUpToDate"};
++		return ok && WritePaths(m_mesh_queue[0], &flag, 1);
++	}
++
++	/*!
++	 * Each new depth mesh: the driver hands them over while the room view shows the cameras (it
++	 * asks for frames), and asking is what keeps pico4-slamd making them, so otherwise its depth
++	 * pipeline idles. A new layoutId only when the triangles change (PICO OS's hemisphere keeps
++	 * them), each mesh once, as the Frame's XR service publishes its own.
++	 */
++	void
++	MeshRun()
++	{
++		std::vector<float> vertices(PICO4_DEPTH_MESH_VERTICES * 3);
++		std::vector<uint32_t> indices(PICO4_DEPTH_MESH_INDICES), layout;
++		struct pico4_depth_mesh_info info = {}, next;
++		uint64_t layout_id = 0, published = 0;
++		while (m_meshing) {
++			// A failed copy may leave a partial mesh in its buffers; the next mesh replaces it.
++			if (!pico4_hmd_depth_mesh(m_xdev, info.id, vertices.data(), indices.data(), &next)) {
++				std::this_thread::sleep_for(std::chrono::milliseconds(2));
++				continue;
++			}
++			info = next;
++			if (layout_id == 0 || layout.size() != info.index_count ||
++			    memcmp(layout.data(), indices.data(), layout.size() * sizeof(uint32_t)) != 0) {
++				layout.assign(indices.begin(), indices.begin() + info.index_count);
++				layout_id++;
++				if (!WriteLayout(layout_id, (int32_t)info.vertex_count, layout)) {
++					layout.clear();
++					continue;
++				}
++			}
++			if (!WriteMesh(info, vertices, layout_id)) {
++				continue;
++			}
++			if (published++ % 250 == 0) {
++				ovrd_log("Camera: depth mesh %llu published: %u vertices, %u triangles, layout %llu\n",
++				         (unsigned long long)info.id, info.vertex_count, info.index_count / 3,
++				         (unsigned long long)layout_id);
++			}
++		}
++	}
++
+ 	//! The HMD's pose at the exposure, as GetPose reports it.
+ 	vr::TrackedDevicePose_t
+ 	HeadPoseAt(int64_t at_ns)
+@@ -1718,6 +1946,15 @@ private:
+ 	int64_t m_start_ns = 0;
+ 	IVRBlockQueue005 *m_queues = nullptr;
+ 	vr::PropertyContainerHandle_t m_mesh_queue[2] = {0, 0};
++	IVRPaths001 *m_paths = nullptr;
++	//! One block size for both queues: the most vertices (12 bytes each) or indices (4 bytes each).
++	static constexpr uint32_t kMeshBlockSize = PICO4_DEPTH_MESH_VERTICES * 12 > PICO4_DEPTH_MESH_INDICES * 4
++	                                               ? PICO4_DEPTH_MESH_VERTICES * 12
++	                                               : PICO4_DEPTH_MESH_INDICES * 4;
++	std::thread m_mesh_thread;
++	std::atomic<bool> m_meshing{false};
++	bool m_mesh_error_logged = false;
++	uint64_t m_mesh_id = 0; //!< Each published data block's meshId.
+ };
+ 
+ /*!

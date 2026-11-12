@@ -1,0 +1,65 @@
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -740,6 +740,40 @@
+ 		}
+ 	}
+ 
++	/*!
++	 * The PICO 4's inputs under the names of SteamVR's own pico_controller profile, which are
++	 * Touch's, so that games' Touch bindings apply unchanged. Each hand's system button is its
++	 * menu button (left) or PICO button (right), as SteamVR's profile has it.
++	 */
++	void
++	AddPico4Controls()
++	{
++		struct MonadoInputComponent x = {true, true, false};
++		struct MonadoInputComponent y = {true, false, true};
++
++		AddControl("/input/trigger/value", XRT_INPUT_PICO4_TRIGGER_VALUE, NULL);
++		AddControl("/input/trigger/click", XRT_INPUT_PICO4_TRIGGER_CLICK, NULL);
++		AddControl("/input/trigger/touch", XRT_INPUT_PICO4_TRIGGER_TOUCH, NULL);
++		AddControl("/input/grip/value", XRT_INPUT_PICO4_SQUEEZE_VALUE, NULL);
++		AddControl("/input/grip/click", XRT_INPUT_PICO4_SQUEEZE_CLICK, NULL);
++		AddControl("/input/joystick/x", XRT_INPUT_PICO4_THUMBSTICK, &x);
++		AddControl("/input/joystick/y", XRT_INPUT_PICO4_THUMBSTICK, &y);
++		AddControl("/input/joystick/click", XRT_INPUT_PICO4_THUMBSTICK_CLICK, NULL);
++		AddControl("/input/joystick/touch", XRT_INPUT_PICO4_THUMBSTICK_TOUCH, NULL);
++		// AddControl leaves out the other hand's buttons.
++		AddControl("/input/x/click", XRT_INPUT_PICO4_X_CLICK, NULL);
++		AddControl("/input/x/touch", XRT_INPUT_PICO4_X_TOUCH, NULL);
++		AddControl("/input/y/click", XRT_INPUT_PICO4_Y_CLICK, NULL);
++		AddControl("/input/y/touch", XRT_INPUT_PICO4_Y_TOUCH, NULL);
++		AddControl("/input/a/click", XRT_INPUT_PICO4_A_CLICK, NULL);
++		AddControl("/input/a/touch", XRT_INPUT_PICO4_A_TOUCH, NULL);
++		AddControl("/input/b/click", XRT_INPUT_PICO4_B_CLICK, NULL);
++		AddControl("/input/b/touch", XRT_INPUT_PICO4_B_TOUCH, NULL);
++		AddControl("/input/system/click",
++		           m_hand == XRT_HAND_LEFT ? XRT_INPUT_PICO4_MENU_CLICK : XRT_INPUT_PICO4_SYSTEM_CLICK, NULL);
++		AddOutputControl(XRT_OUTPUT_NAME_PICO4_HAPTIC, "/output/haptic");
++	}
++
+ 	void
+ 	AddMonadoControls()
+ 	{
+@@ -837,6 +871,12 @@
+ 
+ 			m_input_profile = std::string("{monado}/input/") + std::string(p->steamvr_input_profile_path);
+ 			m_controller_type = p->steamvr_controller_type;
++			if (m_xdev->name == XRT_DEVICE_PICO4_CONTROLLER) {
++				// SteamVR's own type for these controllers: games' bindings for it, or their Touch,
++				// Index or Vive bindings through SteamVR's remapping for it.
++				m_input_profile = "{monado}/input/pico4_controller_profile.json";
++				m_controller_type = "pico_controller";
++			}
+ 		}
+ 
+ 		ovrd_log("Using input profile %s\n", m_input_profile.c_str());
+@@ -850,6 +890,8 @@
+ 		m_input_controls.clear();
+ 		if (m_emulate_index_controller) {
+ 			AddEmulatedIndexControls();
++		} else if (m_xdev->name == XRT_DEVICE_PICO4_CONTROLLER) {
++			AddPico4Controls();
+ 		} else {
+ 			AddMonadoControls();
+ 		}

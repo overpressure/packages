@@ -1,0 +1,56 @@
+--- a/src/xrt/ipc/server/ipc_server_mainloop_linux.c
++++ b/src/xrt/ipc/server/ipc_server_mainloop_linux.c
+@@ -37,6 +37,7 @@
+ #include <sys/epoll.h>
+ #include <fcntl.h>
+ #include <errno.h>
++#include <signal.h>
+ #include <stdio.h>
+ #include <string.h>
+ #include <assert.h>
+@@ -221,6 +222,21 @@
+ #define NO_SLEEP 0
+ 
+ /*
++ * systemd stops the service with SIGTERM. Without a handler the process just
++ * dies, so the compositor and drivers never shut down (the display target
++ * keeps its state, the GPU keeps its clock floor). Shut down as for input on
++ * stdin instead; the main loop polls every 50 ms.
++ */
++static volatile sig_atomic_t shutdown_requested;
++
++static void
++handle_shutdown_signal(int sig)
++{
++	(void)sig;
++	shutdown_requested = 1;
++}
++
++/*
+  *
+  * Exported functions
+  *
+@@ -233,6 +249,11 @@
+ 
+ 	int epoll_fd = ml->epoll_fd;
+ 
++	if (shutdown_requested) {
++		ipc_server_handle_shutdown_signal(vs);
++		return;
++	}
++
+ 	struct epoll_event events[NUM_POLL_EVENTS] = {0};
+ 
+ 	// No sleeping, returns immediately.
+@@ -273,6 +294,11 @@
+ 		ipc_server_mainloop_deinit(ml);
+ 		return ret;
+ 	}
++
++	struct sigaction sa = {.sa_handler = handle_shutdown_signal};
++	sigemptyset(&sa.sa_mask);
++	sigaction(SIGTERM, &sa, NULL);
++	sigaction(SIGINT, &sa, NULL);
+ 	return 0;
+ }
+ 

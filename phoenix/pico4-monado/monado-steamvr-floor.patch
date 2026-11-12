@@ -1,0 +1,129 @@
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -73,6 +73,12 @@
+                        uint8_t *y,
+                        uint32_t stride,
+                        struct pico4_passthrough_frame *out) __attribute__((weak));
++// The floor the PICO 4's tracker detected, in SteamVR's raw space (pico4_interface.h); weak as above.
++extern "C" bool
++pico4_hmd_floor(struct xrt_device *xdev, float *out_y) __attribute__((weak));
++// Its ground detection again, when a room-setup step that detects the floor begins.
++extern "C" void
++pico4_hmd_detect_floor(struct xrt_device *xdev) __attribute__((weak));
+ extern "C" bool
+ pico4_hmd_depth_mesh(struct xrt_device *xdev,
+                      uint64_t after,
+@@ -2400,6 +2406,31 @@
+ 	// clang-format on
+ 
+ private:
++	void
++	SetFloorDetection(bool on);
++	void
++	SendFloor(float y);
++	void
++	UpdateFloor();
++
++	/*!
++	 * The detected floor for SteamVR's room setup, as the Frame's HMD driver gives it
++	 * (docs/xr.md#room-setup): the dashboard announces each room-setup step to the drivers
++	 * (event 809, the step in data.u32[0]); in steps 3 (the boundary circle), 6 (the silent
++	 * floor detection at start) and 7 (the playspace setup) the floor's height in raw space goes,
++	 * through the room setup's transform, to vrserver (IVRServerInternal_XXX, vtable slot 40),
++	 * which hands it to the compositor ("floor_detection_result"): its floor target snaps to it
++	 * and accepting commits it. NaN clears it when the step ends. Each such step starts the
++	 * tracker's ground detection again, so the floor comes from what the head sees then.
++	 */
++	static constexpr vr::EVREventType kRoomSetupStepEvent = static_cast<vr::EVREventType>(809);
++	static constexpr int kFloorDetectionSlot = 40;
++	void *m_server_internal = nullptr;
++	IVRPaths001 *m_floor_paths = nullptr;
++	uint64_t m_room_setup_transform = 0;
++	bool m_floor_detection = false;
++	float m_floor_sent = NAN;
++
+ 	struct xrt_instance *m_xinst = NULL;
+ 	struct xrt_system *m_xsys = NULL;
+ 	struct xrt_system_devices *m_xsysd = NULL;
+@@ -2580,6 +2611,12 @@
+ 		// https://github.com/ValveSoftware/SteamVR-for-Linux/issues/307
+ 		// case vr::VREvent_ActionBindingReloaded: ovrd_log("action binding reloaded\n"); break;
+ 		case vr::VREvent_StatusUpdate: ovrd_log("EVRState: %d\n", event.data.status.statusState); break;
++		case kRoomSetupStepEvent: {
++			const uint32_t step = event.data.reserved.reserved0 & 0xffffffffu;
++			ovrd_log("Room setup: step %u\n", step);
++			SetFloorDetection(step == 3 || step == 6 || step == 7);
++			break;
++		}
+ 
+ 		case vr::VREvent_TrackedDeviceRoleChanged:
+ 			// device roles are for legacy input
+@@ -2596,6 +2633,68 @@
+ 		default: ovrd_log("Unhandled Event: %d\n", event.eventType);
+ 		}
+ 	}
++	UpdateFloor();
++}
++
++void
++CServerDriver_Monado::SetFloorDetection(bool on)
++{
++	if (on == m_floor_detection || pico4_hmd_floor == NULL) {
++		return;
++	}
++	if (m_server_internal == nullptr) {
++		vr::EVRInitError err = vr::VRInitError_None;
++		m_server_internal = vr::VRDriverContext()->GetGenericInterface("IVRServerInternal_XXX", &err);
++		m_floor_paths = (IVRPaths001 *)vr::VRDriverContext()->GetGenericInterface("IVRPaths_001", &err);
++		if (m_floor_paths != nullptr) {
++			m_floor_paths->StringToHandle(&m_room_setup_transform, "/chaperone/room_setup/transform");
++		}
++		if (m_server_internal == nullptr || m_floor_paths == nullptr) {
++			ovrd_log("Room setup: no floor detection (server %p, paths %p)\n", m_server_internal,
++			         (void *)m_floor_paths);
++			return;
++		}
++	}
++	m_floor_detection = on;
++	ovrd_log("Room setup: floor detection %s\n", on ? "on" : "off");
++	if (on && pico4_hmd_detect_floor != NULL && m_xhmd != NULL) {
++		pico4_hmd_detect_floor(m_xhmd);
++	}
++	if (!on) {
++		SendFloor(NAN);
++	}
++	m_floor_sent = NAN;
++}
++
++void
++CServerDriver_Monado::SendFloor(float y)
++{
++	using floor_fn = void (*)(void *self, float y);
++	void **vtable = *(void ***)m_server_internal;
++	((floor_fn)vtable[kFloorDetectionSlot])(m_server_internal, y);
++}
++
++//! While detection is on: each new floor height, through the room setup's transform as driver_cv.
++void
++CServerDriver_Monado::UpdateFloor()
++{
++	float y;
++	if (!m_floor_detection || m_xhmd == NULL || !pico4_hmd_floor(m_xhmd, &y) ||
++	    fabsf(y - m_floor_sent) < 0.001f) {
++		return;
++	}
++	vr::HmdMatrix34_t m;
++	PathRead001 read = {m_room_setup_transform, &m, sizeof(m), 0, 0, 0, nullptr};
++	if (m_floor_paths->ReadPathBatch(kChaperoneRoot, &read, 1) != 0 || read.error != 0 ||
++	    read.tag != vr::k_unHmdMatrix34PropertyTag) {
++		return;
++	}
++	const float y_setup = m.m[1][1] * y + m.m[1][3];
++	SendFloor(y_setup);
++	if (std::isnan(m_floor_sent)) {
++		ovrd_log("Room setup: the detected floor at %.3f m (raw), %.3f m in the room setup\n", y, y_setup);
++	}
++	m_floor_sent = y;
+ }
+ 
+ 

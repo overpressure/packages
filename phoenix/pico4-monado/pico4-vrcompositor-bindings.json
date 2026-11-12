@@ -1,0 +1,189 @@
+{
+  "action_manifest_version": 0,
+  "app_key": "openvr.component.vrcompositor",
+  "category": "steamvr_input",
+  "controller_type": "pico_controller",
+  "name": "SteamVR dashboard bindings for the PICO 4 controllers",
+  "description": "Home (right) or menu (left): once toggles the dashboard, twice the room view (as the Frame's system button); the aim pose points, the trigger clicks, the grip goes back, the joystick scrolls.",
+  "options": {},
+  "simulated_actions": [],
+  "alias_info": {},
+  "bindings": {
+    "/actions/system": {
+      "sources": [
+        {
+          "path": "/user/hand/right/input/system",
+          "mode": "complex_button",
+          "inputs": {
+            "single": {"output": "/actions/system/in/ToggleDashboard"},
+            "double": {"output": "/actions/system/in/ToggleRoomView"},
+            "held": {"output": "/actions/system/in/SystemButtonChord"}
+          }
+        },
+        {
+          "path": "/user/hand/left/input/system",
+          "mode": "complex_button",
+          "inputs": {
+            "single": {"output": "/actions/system/in/ToggleDashboard"},
+            "double": {"output": "/actions/system/in/ToggleRoomView"},
+            "held": {"output": "/actions/system/in/SystemButtonChord"}
+          }
+        }
+      ],
+      "chords": [
+        {
+          "inputs": [["/user/hand/right/input/system", "held"], ["/user/hand/right/input/trigger", "click"]],
+          "output": "/actions/system/in/TakeScreenshot"
+        }
+      ]
+    },
+    "/actions/quickrecenter": {
+      "sources": [
+        {
+          "path": "/user/hand/right/input/system",
+          "mode": "button",
+          "parameters": {"long_press_delay": 1.0, "long_press_expiry": 3.0},
+          "inputs": {"long": {"output": "/actions/quickrecenter/in/Recenter"}}
+        }
+      ]
+    },
+    "/actions/lasermouse": {
+      "poses": [
+        {"path": "/user/hand/left/pose/aim", "output": "/actions/lasermouse/in/Pointer"},
+        {"path": "/user/hand/right/pose/aim", "output": "/actions/lasermouse/in/Pointer"}
+      ],
+      "haptics": [
+        {"path": "/user/hand/left/output/haptic", "output": "/actions/lasermouse/out/Haptic"},
+        {"path": "/user/hand/right/output/haptic", "output": "/actions/lasermouse/out/Haptic"}
+      ],
+      "sources": [
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "button",
+          "parameters": {"click_activate_threshold": "0.65", "click_deactivate_threshold": "0.6"},
+          "inputs": {"click": {"output": "/actions/lasermouse/in/LeftClick"}}
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "button",
+          "parameters": {"click_activate_threshold": "0.65", "click_deactivate_threshold": "0.6"},
+          "inputs": {"click": {"output": "/actions/lasermouse/in/LeftClick"}}
+        },
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "button",
+          "parameters": {"click_activate_threshold": "0.1", "click_deactivate_threshold": "0.05", "haptic_amplitude": "0"},
+          "inputs": {"click": {"output": "/actions/lasermouse/in/LockMousePosition"}}
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "button",
+          "parameters": {"click_activate_threshold": "0.1", "click_deactivate_threshold": "0.05", "haptic_amplitude": "0"},
+          "inputs": {"click": {"output": "/actions/lasermouse/in/LockMousePosition"}}
+        },
+        {
+          "path": "/user/hand/left/input/grip",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/lasermouse/in/Back"}}
+        },
+        {
+          "path": "/user/hand/right/input/grip",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/lasermouse/in/Back"}}
+        },
+        {
+          "path": "/user/hand/left/input/joystick",
+          "mode": "joystick",
+          "inputs": {"click": {"output": "/actions/lasermouse/in/MiddleClick"}}
+        },
+        {
+          "path": "/user/hand/right/input/joystick",
+          "mode": "joystick",
+          "inputs": {"click": {"output": "/actions/lasermouse/in/MiddleClick"}}
+        }
+      ]
+    },
+    "/actions/lasermouse_secondary": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "button",
+          "parameters": {"click_activate_threshold": "0.7", "click_deactivate_threshold": "0.65", "haptic_amplitude": "0"},
+          "inputs": {"click": {"output": "/actions/lasermouse_secondary/in/SwitchLaserHand"}}
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "button",
+          "parameters": {"click_activate_threshold": "0.7", "click_deactivate_threshold": "0.65", "haptic_amplitude": "0"},
+          "inputs": {"click": {"output": "/actions/lasermouse_secondary/in/SwitchLaserHand"}}
+        }
+      ]
+    },
+    "/actions/scroll_discrete": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/joystick",
+          "mode": "scroll",
+          "parameters": {"scroll_mode": "discrete"},
+          "inputs": {"scroll": {"output": "/actions/scroll_discrete/in/Scroll"}}
+        },
+        {
+          "path": "/user/hand/right/input/joystick",
+          "mode": "scroll",
+          "parameters": {"scroll_mode": "discrete"},
+          "inputs": {"scroll": {"output": "/actions/scroll_discrete/in/Scroll"}}
+        }
+      ]
+    },
+    "/actions/scroll_smooth": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/joystick",
+          "mode": "scroll",
+          "parameters": {"scroll_mode": "smooth"},
+          "inputs": {"scroll": {"output": "/actions/scroll_smooth/in/Scroll"}}
+        },
+        {
+          "path": "/user/hand/right/input/joystick",
+          "mode": "scroll",
+          "parameters": {"scroll_mode": "smooth"},
+          "inputs": {"scroll": {"output": "/actions/scroll_smooth/in/Scroll"}}
+        }
+      ]
+    },
+    "/actions/roomsetup": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/joystick",
+          "mode": "joystick",
+          "inputs": {"position": {"output": "/actions/roomsetup/in/FloorFineAdjust"}}
+        },
+        {
+          "path": "/user/hand/right/input/joystick",
+          "mode": "joystick",
+          "inputs": {"position": {"output": "/actions/roomsetup/in/FloorFineAdjust"}}
+        },
+        {
+          "path": "/user/hand/left/input/x",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/roomsetup/in/Accept"}}
+        },
+        {
+          "path": "/user/hand/left/input/y",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/roomsetup/in/Back"}}
+        },
+        {
+          "path": "/user/hand/right/input/a",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/roomsetup/in/Accept"}}
+        },
+        {
+          "path": "/user/hand/right/input/b",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/roomsetup/in/Back"}}
+        }
+      ]
+    }
+  }
+}

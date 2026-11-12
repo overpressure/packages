@@ -59,7 +59,7 @@ mesa-utils
 
 # Project-built: the step-3 graphics test
 overpressure-common/overpressure-libdisplay-info
-overpressure-phoenix/pico4-graphics-tests  # elsewhere: the main repository builds it until it moves here
+overpressure-phoenix/pico4-graphics-tests
 
 # Project-built: host daemons for the sensor DSP (head IMU, docs/xr.md); python runs
 # the pico4-imu client
@@ -68,7 +68,7 @@ python
 
 # Project-built: Monado OpenXR runtime with the PICO 4 head-tracking driver, and
 # Basalt as its SLAM backend for 6DoF (docs/xr.md)
-overpressure-phoenix/pico4-monado  # elsewhere: the main repository builds it until it moves here
+overpressure-phoenix/pico4-monado
 overpressure-phoenix/pico4-basalt
 # Arch's OpenCV links its highgui module against Qt without depending on it;
 # Monado and Basalt load that module
@@ -81,9 +81,9 @@ qt6-base
 deckard-arch-hotfixes-release-0.3/deckard-steamvr-session
 deckard-arch-hotfixes-release-0.3/deckard-steamvr-rel
 # Project-built: pacing and scanout usage for SteamVR's compositor (Vulkan layer)
-overpressure-phoenix/pico4-swapchain-usage  # elsewhere: the main repository builds it until it moves here
+overpressure-phoenix/pico4-swapchain-usage
 # Project-built: Steam Link's client on the PICO 4's video decoder (V4L2 compatibility layer)
-overpressure-phoenix/pico4-vrlink  # elsewhere: the main repository builds it until it moves here
+overpressure-phoenix/pico4-vrlink
 jq
 # SteamVR's dashboard (vrwebhelper, CEF) links ATK and AT-SPI; gamescope-onready
 # runs xhost and xrdb before it reports the session ready

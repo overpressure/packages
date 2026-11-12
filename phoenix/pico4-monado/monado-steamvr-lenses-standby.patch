@@ -1,0 +1,98 @@
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -79,6 +79,11 @@
+ // Its ground detection again, when a room-setup step that detects the floor begins.
+ extern "C" void
+ pico4_hmd_detect_floor(struct xrt_device *xdev) __attribute__((weak));
++// The lens separation, which the motor can change during a session, and SteamVR's standby.
++extern "C" bool
++pico4_hmd_ipd(struct xrt_device *xdev, float *out_ipd_m) __attribute__((weak));
++extern "C" void
++pico4_hmd_standby(struct xrt_device *xdev, bool standby) __attribute__((weak));
+ extern "C" bool
+ pico4_hmd_depth_mesh(struct xrt_device *xdev,
+                      uint64_t after,
+@@ -1270,6 +1275,7 @@
+ 	bool m_poseUpdating = true;
+ 	std::thread *m_poseUpdateThread = NULL;
+ 	virtual void PoseUpdateThreadFunction();
++	void UpdateIpd(std::chrono::steady_clock::time_point *next);
+ 
+ 	//! SteamVR's user presence from the headset's wear sensor; -1 until it has reported.
+ 	vr::VRInputComponentHandle_t m_proximity = vr::k_ulInvalidInputComponentHandle;
+@@ -1988,12 +1994,44 @@
+ 	vr::VRProperties()->SetBoolProperty(props, vr::Prop_DeviceIsCharging_Bool, charging);
+ }
+ 
++/*!
++ * After a move of the lenses, at most once a second: SteamVR's eye positions and its IPD, which
++ * were set once in Activate.
++ */
++void
++CDeviceDriver_Monado::UpdateIpd(std::chrono::steady_clock::time_point *next)
++{
++	auto now = std::chrono::steady_clock::now();
++	float ipd;
++	if (now < *next || pico4_hmd_ipd == NULL) {
++		return;
++	}
++	*next = now + std::chrono::seconds(1);
++	if (!pico4_hmd_ipd(m_xdev, &ipd) || std::abs(ipd - m_flIPD) < 0.0001f) {
++		return;
++	}
++	struct xrt_vec3 ipd_vec = {ipd, 0, 0};
++	struct xrt_space_relation head_relation;
++	struct xrt_fov fovs[2];
++	xrt_device_get_view_poses(m_xdev, &ipd_vec, os_monotonic_get_ns(), XRT_VIEW_TYPE_STEREO, 2, &head_relation,
++	                          fovs, m_view_pose);
++	m_flIPD = -m_view_pose[0].position.x + m_view_pose[1].position.x;
++	vr::HmdMatrix34_t left;
++	create_translation_rotation_matrix(&m_view_pose[0], &left);
++	vr::HmdMatrix34_t right;
++	create_translation_rotation_matrix(&m_view_pose[1], &right);
++	vr::VRServerDriverHost()->SetDisplayEyeToHead(m_trackedDeviceIndex, left, right);
++	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_UserIpdMeters_Float, m_flIPD);
++	ovrd_log("IPD: %f\n", m_flIPD);
++}
++
+ void
+ CDeviceDriver_Monado::PoseUpdateThreadFunction()
+ {
+ 	ovrd_log("Starting HMD pose update thread\n");
+ 
+ 	std::chrono::steady_clock::time_point battery_at{};
++	std::chrono::steady_clock::time_point ipd_at{};
+ 	std::chrono::steady_clock::time_point universe_at{};
+ 	while (m_poseUpdating) {
+ 		//! @todo figure out the best pose update rate
+@@ -2001,6 +2039,7 @@
+ 		vr::VRServerDriverHost()->TrackedDevicePoseUpdated(m_trackedDeviceIndex, GetPose(),
+ 		                                                   sizeof(vr::DriverPose_t));
+ 		update_battery(m_xdev, m_ulPropertyContainer, &battery_at);
++		UpdateIpd(&ipd_at);
+ 		bool worn = false;
+ 		if (m_proximity != vr::k_ulInvalidInputComponentHandle && pico4_hmd_get_presence(m_xdev, &worn) &&
+ 		    (int)worn != m_worn) {
+@@ -2078,6 +2117,9 @@
+ 	vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_ManufacturerName_String, "Monado");
+ 	vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_ModelNumber_String, m_xdev->str);
+ 	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_UserIpdMeters_Float, m_flIPD);
++	// SteamVR's IPD display over the headset's range.
++	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_IpdUIRangeMinMeters_Float, 0.062f);
++	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_IpdUIRangeMaxMeters_Float, 0.072f);
+ 	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_UserHeadToEyeDepthMeters_Float, 0.f);
+ 	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_DisplayFrequency_Float, m_flDisplayFrequency);
+ 	// The refresh rates the panels run (their one mode). SteamVR's Steam Link client sends them to
+@@ -2608,6 +2650,12 @@
+ 			ovrd_log("Device interaction started %d\n", event.trackedDeviceIndex);
+ 			break;
+ 		case vr::VREvent_IpdChanged: ovrd_log("ipd changed to %fm\n", event.data.ipd.ipdMeters); break;
++		case vr::VREvent_EnterStandbyMode:
++		case vr::VREvent_LeaveStandbyMode:
++			if (pico4_hmd_standby != NULL && m_xhmd != NULL) {
++				pico4_hmd_standby(m_xhmd, event.eventType == vr::VREvent_EnterStandbyMode);
++			}
++			break;
+ 		// This event currently spams the console, so is currently commented out. see
+ 		// https://github.com/ValveSoftware/SteamVR-for-Linux/issues/307
+ 		// case vr::VREvent_ActionBindingReloaded: ovrd_log("action binding reloaded\n"); break;
