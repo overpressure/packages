@@ -20,12 +20,13 @@ class Plan(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
         (self.tmp / "build").mkdir()
-        (self.tmp / "build/packages.sh").write_text("build\n")
+        (self.tmp / "build/packages.sh").write_text("build\nFRAME_REPO=frame\n")
         definition = self.tmp / "headsets/h"
         definition.mkdir(parents=True)
         (definition / "layers").write_text("# general first\ncommon\nh\n")
-        for name in ("pacman.conf", "packages.txt", "packages.lock"):
+        for name in ("pacman.conf", "packages.lock"):
             (definition / name).write_text(f"{name}\n")
+        (definition / "packages.txt").write_text("base\nframe/steamvr\nh/h-c\n")
         for layer, name in (("common", "overpressure-a"), ("common", "overpressure-b"), ("h", "h-c")):
             folder = self.tmp / layer / name
             folder.mkdir(parents=True)
@@ -60,8 +61,21 @@ class Plan(unittest.TestCase):
         for path in ("build/packages.sh", "headsets/h/packages.lock", "headsets/h/pacman.conf"):
             with self.subTest(path=path):
                 old = self.keys()
-                (self.tmp / path).write_text("changed " + path)
+                (self.tmp / path).write_text("FRAME_REPO=frame\nchanged " + path)
                 self.assertTrue(all(old[n] != k for n, k in self.keys().items()))
+
+    def test_a_frame_package_of_the_list_moves_every_key(self) -> None:
+        before = self.keys()
+        with (self.tmp / "headsets/h/packages.txt").open("a") as f:
+            f.write("frame/gamescope  # the environment installs it\n")
+        self.assertTrue(all(before[n] != k for n, k in self.keys().items()))
+
+    def test_the_rest_of_the_list_and_the_layers_move_no_key(self) -> None:
+        before = self.keys()
+        with (self.tmp / "headsets/h/packages.txt").open("a") as f:
+            f.write("# a new package of ours\nh/h-d\njq\n")
+        (self.tmp / "headsets/h/layers").write_text("common\nh\n")
+        self.assertEqual(before, self.keys())
 
     def test_hidden_files_do_not_count(self) -> None:
         before = self.keys()

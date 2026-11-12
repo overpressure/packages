@@ -70,7 +70,9 @@ shellcheck build/*.sh
 Every push and pull request builds each package in its own job on an arm64 runner
 ([packages.yml](.github/workflows/packages.yml)); one job then writes each layer's database. A package's
 key ([build/plan.py](build/plan.py)) hashes everything its bytes depend on: its recipe folder,
-`build/packages.sh`, the build image's digest and the headset's definition. A key built before comes
+`build/packages.sh`, the build image's digest and what the build environment takes from the headset's
+definition: `pacman.conf`, `packages.lock` and the packages `packages.txt` takes from the Frame's
+repository. Adding one of the project's packages to `packages.txt` moves no other key. A key built before comes
 from the cache, so a change rebuilds only the packages it touches. A tag `YYYY.MM.DD` (or `YYYY.MM.DD.N`)
 builds every package anew, without the cache, and publishes a release: every layer's packages and
 database, the copyleft packages' sources and `SHA256SUMS`. Released tags never move or disappear (a
