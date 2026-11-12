@@ -1,0 +1,15 @@
+[Unit]
+Description=FastRPC file server for the ADSP's audio process (audiopd)
+ConditionPathExists=/usr/share/qcom/pico4-audio
+Requires=pico4-adsp.service
+After=pico4-adsp.service 
+
+[Service]
+# PICO OS starts the audio process as "adsprpcd audiopd": the static process audiopd from the
+# ADSP's image, then the file server it loads its configuration through.
+ExecStart=/usr/libexec/pico4/audiopd
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=pico4-audio.target

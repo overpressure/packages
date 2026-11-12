@@ -1,0 +1,836 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
+"""Stream the PICO 4 head IMU from the Qualcomm Sensor Core (SSC) on the SLPI.
+
+The IMU is wired to the sensor DSP, not to the application processor. Clients
+talk to the DSP's SNS client service (QMI service 0x190) over QRTR; requests
+and events inside the QMI messages are protobuf-encoded. This tool needs no
+libraries beyond Python: it encodes the few messages it uses by hand.
+
+  pico4-imu list                         sensors the DSP offers, with attributes
+  pico4-imu wait [--timeout S]           until the accelerometer and gyroscope are listed
+  pico4-imu stream [--rate HZ] [--seconds S] [--csv FILE] [--orientation] [--check]
+
+`stream` prints one JSON summary; `--check` makes it exit 1 unless the
+stationary-headset acceptance limits hold (see check_summary()).
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import math
+import select
+import socket
+import struct
+import sys
+import time
+from pathlib import Path
+from typing import IO, TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator, Sequence
+
+AF_QIPCRTR = getattr(socket, "AF_QIPCRTR", 42)
+QRTR_PORT_CTRL = 0xFFFFFFFE
+QRTR_TYPE_NEW_SERVER = 4
+QRTR_TYPE_NEW_LOOKUP = 10
+#: A QRTR control packet: command, service, instance, node, port.
+QRTR_CTRL_FORMAT = "<IIIII"
+QRTR_CTRL_SIZE = struct.calcsize(QRTR_CTRL_FORMAT)
+
+SNS_CLIENT_SERVICE = 0x190
+QMI_REQUEST, QMI_RESPONSE, QMI_INDICATION = 0, 2, 4
+SSC_MSG_CONTROL = 0x20
+SSC_IND_SMALL, SSC_IND_LARGE = 0x21, 0x22
+#: A QMI message's header: type, transaction, message id, length.
+QMI_HEADER = struct.calcsize("<BHHH")
+#: The SSC's payload in a QMI TLV starts with its length, a u16.
+SSC_LENGTH_PREFIX = struct.calcsize("<H")
+
+SUID_SENSOR = (0xABABABABABABABAB, 0xABABABABABABABAB)
+MSG_ATTR_REQ, MSG_ATTR_EVENT = 1, 128
+MSG_DISABLE = 10
+MSG_SUID_REQ, MSG_SUID_EVENT = 512, 768
+MSG_CONFIG = 513
+MSG_PHYSICAL_CONFIG_EVENT = 768
+MSG_SENSOR_EVENT = 1025
+
+QTIMER_HZ = 19_200_000
+STANDARD_GRAVITY = 9.80665
+AXES = 3  # x, y, z of a sample
+MIN_SAMPLES = 2  # fewer have no interval to measure
+
+# Protobuf wire types (proto2), and the fields of the messages read here.
+WIRE_VARINT, WIRE_FIXED64, WIRE_LENGTH, WIRE_FIXED32 = 0, 1, 2, 5
+CLIENT_EVENT_EVENTS = 2  # sns_client_event_msg: the repeated events
+SUID_EVENT_SUIDS = 2  # sns_suid_event: the repeated SUIDs
+# sns_std_attr_value_data: which value it holds.
+ATTR_SUBTYPE, ATTR_STR, ATTR_FLOAT, ATTR_SINT, ATTR_BOOLEAN = 1, 2, 3, 4, 5
+#: pb_tree decodes nested messages this deep.
+PB_TREE_DEPTH = 4
+PRINTABLE = range(32, 127)
+
+# The stationary-headset acceptance limits (check_summary).
+MIN_SAMPLE_SHARE = 0.5  # of the samples the requested rate gives
+GRAVITY_TOLERANCE = 0.5  # m/s^2 between the accelerometer's mean norm and standard gravity
+GYRO_BIAS_MAX = 0.05  # rad/s on any axis
+
+ATTR_NAMES = {
+    0: "name",
+    1: "vendor",
+    2: "type",
+    3: "available",
+    4: "version",
+    6: "rates",
+    8: "fifo_size",
+    11: "ranges",
+    12: "op_modes",
+    17: "dynamic",
+    18: "hw_id",
+    19: "rigid_body",
+    20: "placement",
+    21: "physical_sensor",
+    23: "selected_resolution",
+    24: "selected_range",
+}
+
+
+# --- protobuf (proto2 wire format) ---------------------------------------
+
+
+def _varint(value: int) -> bytes:
+    out = bytearray()
+    value &= (1 << 64) - 1
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return bytes(out)
+
+
+def pb_varint(field: int, value: int) -> bytes:
+    """Encode a varint field."""
+    return _varint(field << 3 | WIRE_VARINT) + _varint(value)
+
+
+def pb_fixed32(field: int, value: int) -> bytes:
+    """Encode a fixed32 field."""
+    return _varint(field << 3 | WIRE_FIXED32) + struct.pack("<I", value)
+
+
+def pb_fixed64(field: int, value: int) -> bytes:
+    """Encode a fixed64 field."""
+    return _varint(field << 3 | WIRE_FIXED64) + struct.pack("<Q", value)
+
+
+def pb_float(field: int, value: float) -> bytes:
+    """Encode a float field."""
+    return _varint(field << 3 | WIRE_FIXED32) + struct.pack("<f", value)
+
+
+def pb_bytes(field: int, value: bytes) -> bytes:
+    """Encode a length-delimited field: bytes, a string or a nested message."""
+    return _varint(field << 3 | WIRE_LENGTH) + _varint(len(value)) + value
+
+
+def pb_parse(data: bytes) -> list[tuple[int, int, Any]]:
+    """Return (field, wire type, raw value) in order; values stay undecoded: an int or bytes by wire type."""
+    fields = []
+    pos = 0
+    while pos < len(data):
+        key, pos = _read_varint(data, pos)
+        field, wire = key >> 3, key & 7
+        if wire == WIRE_VARINT:
+            value, pos = _read_varint(data, pos)
+        elif wire == WIRE_FIXED64:
+            value = data[pos : pos + 8]
+            pos += 8
+        elif wire == WIRE_LENGTH:
+            length, pos = _read_varint(data, pos)
+            value = data[pos : pos + length]
+            pos += length
+        elif wire == WIRE_FIXED32:
+            value = data[pos : pos + 4]
+            pos += 4
+        else:
+            msg = f"unsupported protobuf wire type {wire}"
+            raise ValueError(msg)
+        if pos > len(data):
+            msg = "truncated protobuf message"
+            raise ValueError(msg)
+        fields.append((field, wire, value))
+    return fields
+
+
+def _read_varint(data: bytes, pos: int) -> tuple[int, int]:
+    result = shift = 0
+    while True:
+        if pos >= len(data):
+            msg = "truncated varint"
+            raise ValueError(msg)
+        byte = data[pos]
+        pos += 1
+        result |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return result, pos
+        shift += 7
+
+
+def pb_floats(fields: list[tuple[int, int, Any]], field: int) -> list[float]:
+    """Return a repeated float field, packed or not."""
+    out = []
+    for f, wire, value in fields:
+        if f != field:
+            continue
+        if wire == WIRE_FIXED32:
+            out.append(struct.unpack("<f", value)[0])
+        elif wire == WIRE_LENGTH:
+            out.extend(struct.unpack(f"<{len(value) // 4}f", value))
+    return out
+
+
+def pb_first(fields: list[tuple[int, int, Any]], field: int, default: Any = None) -> Any:  # noqa: ANN401  # a raw value: an int or bytes by wire type
+    """Return the first value of a field, or the default without one."""
+    for f, _wire, value in fields:
+        if f == field:
+            return value
+    return default
+
+
+def u64(raw: bytes) -> int:
+    """Decode a little-endian u64 (a fixed64 field)."""
+    return struct.unpack("<Q", raw)[0]
+
+
+def u32(raw: bytes) -> int:
+    """Decode a little-endian u32 (a fixed32 field)."""
+    return struct.unpack("<I", raw)[0]
+
+
+# --- SSC messages ---------------------------------------------------------
+
+
+def suid_bytes(suid: tuple[int, int]) -> bytes:
+    """Encode a sensor's SUID (sns_std_suid: low, high)."""
+    return pb_fixed64(1, suid[0]) + pb_fixed64(2, suid[1])
+
+
+def client_request(suid: tuple[int, int], msg_id: int, payload: bytes = b"") -> bytes:
+    """sns_client_request_msg: APPS processor, wakeup delivery."""
+    susp = pb_varint(1, 1) + pb_varint(2, 0)
+    request = pb_bytes(2, payload) if payload else b""
+    return pb_bytes(1, suid_bytes(suid)) + pb_fixed32(2, msg_id) + pb_bytes(3, susp) + pb_bytes(4, request)
+
+
+def suid_request(data_type: str) -> bytes:
+    """Build the SUID lookup for a data type (accel, gyro, ...), default sensors only."""
+    payload = pb_bytes(1, data_type.encode()) + pb_varint(2, 0) + pb_varint(3, 0)
+    return client_request(SUID_SENSOR, MSG_SUID_REQ, payload)
+
+
+def parse_suid(raw: bytes) -> tuple[int, int]:
+    """Decode a sensor's SUID (low, high)."""
+    fields = pb_parse(raw)
+    return u64(pb_first(fields, 1)), u64(pb_first(fields, 2))
+
+
+def parse_client_event(data: bytes) -> tuple[tuple[int, int], list[tuple[int, int, bytes]]]:
+    """Decode sns_client_event_msg: (suid, [(msg_id, timestamp, payload)])."""
+    fields = pb_parse(data)
+    suid = parse_suid(pb_first(fields, 1, b""))
+    events = []
+    for f, _wire, value in fields:
+        if f != CLIENT_EVENT_EVENTS:
+            continue
+        ev = pb_parse(value)
+        events.append((u32(pb_first(ev, 1)), u64(pb_first(ev, 2)), pb_first(ev, 3, b"")))
+    return suid, events
+
+
+def parse_attr_value(raw: bytes) -> list[Any]:
+    """Decode sns_std_attr_value into a list of Python values."""
+    out = []
+    for f, _wire, value in pb_parse(raw):
+        if f != 1:
+            continue
+        data = pb_parse(value)
+        for g, wire, v in data:
+            if g == ATTR_SUBTYPE:
+                out.append(parse_attr_value(v))
+            elif g == ATTR_STR:
+                out.append(v.decode(errors="replace").rstrip("\0"))
+            elif g == ATTR_FLOAT:
+                out.append(round(struct.unpack("<f", v)[0], 6))
+            elif g == ATTR_SINT:
+                out.append(struct.unpack("<q", v)[0] if wire == WIRE_FIXED64 else v)
+            elif g == ATTR_BOOLEAN:
+                out.append(bool(v))
+    return out
+
+
+def parse_attributes(payload: bytes) -> dict:
+    """Decode an attribute event into {name: value}; unknown attributes by number."""
+    attrs = {}
+    for f, _wire, value in pb_parse(payload):
+        if f != 1:
+            continue
+        attr = pb_parse(value)
+        attr_id = pb_first(attr, 1)
+        values = parse_attr_value(pb_first(attr, 2, b""))
+        key = ATTR_NAMES.get(attr_id, str(attr_id))
+        attrs[key] = values[0] if len(values) == 1 else values
+    return attrs
+
+
+# --- QMI over QRTR --------------------------------------------------------
+
+
+def qmi_tlv(tlv_type: int, value: bytes) -> bytes:
+    """Encode one QMI TLV."""
+    return struct.pack("<BH", tlv_type, len(value)) + value
+
+
+def qmi_message(msg_type: int, txn: int, msg_id: int, tlvs: bytes) -> bytes:
+    """Encode a QMI message around its TLVs."""
+    return struct.pack("<BHHH", msg_type, txn, msg_id, len(tlvs)) + tlvs
+
+
+def qmi_parse(packet: bytes) -> tuple[int, int, int, dict[int, bytes]]:
+    """Decode a QMI message: (type, transaction, message id, {TLV type: value})."""
+    if len(packet) < QMI_HEADER:
+        msg = "short QMI packet"
+        raise ValueError(msg)
+    msg_type, txn, msg_id, length = struct.unpack_from("<BHHH", packet)
+    tlvs = {}
+    pos = QMI_HEADER
+    end = min(len(packet), QMI_HEADER + length)
+    while pos + 3 <= end:
+        tlv_type, tlv_len = struct.unpack_from("<BH", packet, pos)
+        pos += 3
+        tlvs[tlv_type] = packet[pos : pos + tlv_len]
+        pos += tlv_len
+    return msg_type, txn, msg_id, tlvs
+
+
+def ssc_control(txn: int, request: bytes, *, large: bool = False) -> bytes:
+    """Wrap a client request into the SSC's QMI control message."""
+    data = struct.pack("<H", len(request)) + request
+    return qmi_message(
+        QMI_REQUEST, txn, SSC_MSG_CONTROL, qmi_tlv(0x01, data) + qmi_tlv(0x10, bytes([1 if large else 0]))
+    )
+
+
+def ssc_indication_data(tlvs: dict[int, bytes]) -> bytes:
+    """Return the client event an SSC indication carries; nothing without one."""
+    raw = tlvs.get(0x02, b"")
+    if len(raw) < SSC_LENGTH_PREFIX:
+        return b""
+    (length,) = struct.unpack_from("<H", raw)
+    return raw[SSC_LENGTH_PREFIX : SSC_LENGTH_PREFIX + length]
+
+
+VERBOSE = False
+
+
+def debug(message: str) -> None:
+    """Log QMI traffic to stderr with -v."""
+    if VERBOSE:
+        print(message, file=sys.stderr, flush=True)
+
+
+class Ssc:
+    """One QMI client of the SNS client service on the SLPI."""
+
+    def __init__(self, timeout: float = 5.0) -> None:
+        """Open a QRTR socket and find the service within the timeout."""
+        self.sock = socket.socket(AF_QIPCRTR, socket.SOCK_DGRAM)
+        self.node = self.sock.getsockname()[0]  # (node, port)
+        self.server = self._lookup(timeout)
+        self.txn = 0
+        self.backlog: list[bytes] = []
+
+    def _lookup(self, timeout: float) -> tuple[int, int]:
+        lookup = struct.pack(QRTR_CTRL_FORMAT, QRTR_TYPE_NEW_LOOKUP, SNS_CLIENT_SERVICE, 0, 0, 0)
+        self.sock.sendto(lookup, (self.node, QRTR_PORT_CTRL))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not select.select([self.sock], [], [], deadline - time.monotonic())[0]:
+                break
+            data, _addr = self.sock.recvfrom(65536)
+            if len(data) < QRTR_CTRL_SIZE:
+                continue
+            cmd, service, _instance, node, port = struct.unpack_from(QRTR_CTRL_FORMAT, data)
+            if cmd == QRTR_TYPE_NEW_SERVER and service == SNS_CLIENT_SERVICE and (node or port):
+                debug(f"SNS client service at node {node} port {port}")
+                return node, port
+        msg = "SNS client service (QMI 0x190) not found; is the SLPI up and sensorspd attached?"
+        raise RuntimeError(msg)
+
+    def request(self, request: bytes, timeout: float = 5.0) -> dict[int, bytes]:
+        """Send a client request and return its response's TLVs; indications meanwhile wait."""
+        self.txn = (self.txn + 1) & 0xFFFF or 1
+        self.sock.sendto(ssc_control(self.txn, request), self.server)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            packet = self._recv(deadline - time.monotonic())
+            if packet is None:
+                break
+            msg_type, txn, msg_id, tlvs = qmi_parse(packet)
+            if msg_type == QMI_RESPONSE and txn == self.txn and msg_id == SSC_MSG_CONTROL:
+                result, error = struct.unpack("<HH", tlvs.get(0x02, b"\0\0\0\0")[:4])
+                debug(f"response txn {txn}: result {result} error {error} tlvs {sorted(tlvs)}")
+                if result:
+                    msg = f"SSC request failed: QMI error {error}"
+                    raise RuntimeError(msg)
+                return tlvs
+            self.backlog.append(packet)
+        msg = "no response from the SNS client service"
+        raise TimeoutError(msg)
+
+    def _recv(self, timeout: float) -> bytes | None:
+        if not select.select([self.sock], [], [], max(0.0, timeout))[0]:
+            return None
+        data, _addr = self.sock.recvfrom(65536)
+        return data
+
+    def events(self, timeout: float) -> Iterator[tuple[tuple[int, int], int, int, bytes]]:
+        """Yield (suid, msg_id, timestamp, payload) until timeout passes without data."""
+        while True:
+            if self.backlog:
+                packet = self.backlog.pop(0)
+            else:
+                packet = self._recv(timeout)
+                if packet is None:
+                    return
+            msg_type, _txn, msg_id, tlvs = qmi_parse(packet)
+            if msg_type != QMI_INDICATION or msg_id not in (SSC_IND_SMALL, SSC_IND_LARGE):
+                debug(f"ignored packet type {msg_type} id {msg_id:#x}: {packet[:32].hex()}")
+                continue
+            suid, events = parse_client_event(ssc_indication_data(tlvs))
+            for ev_id, ts, payload in events:
+                debug(f"event {suid[1]:016x}{suid[0]:016x} msg {ev_id} ts {ts} {payload[:48].hex()}")
+                yield suid, ev_id, ts, payload
+
+    def find(self, data_type: str, timeout: float = 3.0) -> list[tuple[int, int]]:
+        """Return the SUIDs of the sensors of a data type."""
+        self.request(suid_request(data_type))
+        deadline = time.monotonic() + timeout
+        for suid, msg_id, _ts, payload in self.events(timeout):
+            if suid == SUID_SENSOR and msg_id == MSG_SUID_EVENT:
+                fields = pb_parse(payload)
+                if pb_first(fields, 1, b"").decode(errors="replace") == data_type:
+                    return [parse_suid(v) for f, _w, v in fields if f == SUID_EVENT_SUIDS]
+            if time.monotonic() > deadline:
+                break
+        return []
+
+    def attributes(self, suid: tuple[int, int], timeout: float = 3.0) -> dict:
+        """Return a sensor's attributes, empty without an answer."""
+        self.request(client_request(suid, MSG_ATTR_REQ, b""))
+        for ev_suid, msg_id, _ts, payload in self.events(timeout):
+            if ev_suid == suid and msg_id == MSG_ATTR_EVENT:
+                return parse_attributes(payload)
+        return {}
+
+    def enable(self, suid: tuple[int, int], rate: float) -> None:
+        """Start a sensor's stream at this rate (the standard config request)."""
+        self.request(client_request(suid, MSG_CONFIG, pb_float(1, rate)))
+
+    def disable(self, suid: tuple[int, int]) -> None:
+        """Stop a sensor's stream; a service that does not answer is left as it is."""
+        with contextlib.suppress(RuntimeError, TimeoutError):
+            self.request(client_request(suid, MSG_DISABLE), timeout=2.0)
+
+
+class Closable(Protocol):
+    """Something to close: the service's socket."""
+
+    def close(self) -> None:
+        """Close it."""
+
+
+class SensorService(Protocol):
+    """What waiting for the IMU needs of the service: lookups and the socket to close."""
+
+    @property
+    def sock(self) -> Closable:
+        """The connection to the service."""
+
+    def find(self, data_type: str, timeout: float = 3.0) -> list[tuple[int, int]]:
+        """Return the SUIDs of the sensors of a data type."""
+
+
+# --- analysis -------------------------------------------------------------
+
+
+class Stream:
+    """One sensor's samples and the configuration it reported."""
+
+    def __init__(self, name: str) -> None:
+        """Start an empty stream."""
+        self.name = name
+        self.timestamps: list[int] = []
+        self.samples: list[tuple[float, float, float]] = []
+        self.config: dict = {}
+
+    def add(self, ts: int, values: list[float]) -> None:
+        """Take a sample; one without three axes is dropped."""
+        if len(values) >= AXES:
+            self.timestamps.append(ts)
+            self.samples.append((values[0], values[1], values[2]))
+
+    def summary(self) -> dict:
+        """Return the rate, gaps, mean and spread of the samples."""
+        n = len(self.samples)
+        out = {"samples": n, "config": self.config}
+        if n < MIN_SAMPLES:
+            return out
+        ts = self.timestamps
+        deltas = [b - a for a, b in zip(ts, ts[1:])]
+        span = (ts[-1] - ts[0]) / QTIMER_HZ
+        mean = [sum(s[i] for s in self.samples) / n for i in range(3)]
+        std = [math.sqrt(sum((s[i] - mean[i]) ** 2 for s in self.samples) / n) for i in range(3)]
+        norms = [math.sqrt(sum(v * v for v in s)) for s in self.samples]
+        nominal = sorted(deltas)[len(deltas) // 2]
+        out.update(
+            {
+                "rate_hz": round((n - 1) / span, 2) if span > 0 else None,
+                "non_increasing_timestamps": sum(1 for d in deltas if d <= 0),
+                "gaps": sum(1 for d in deltas if nominal and d > 1.5 * nominal),
+                "max_interval_ms": round(max(deltas) / QTIMER_HZ * 1000, 3),
+                "mean": [round(v, 6) for v in mean],
+                "std": [round(v, 6) for v in std],
+                "norm_mean": round(sum(norms) / n, 6),
+            }
+        )
+        return out
+
+
+def orientation_from(accel: Stream, gyro: Stream) -> dict:
+    """Integrate gyro with a gravity-corrected (Mahony-style) complementary filter.
+
+    Returns the final gravity-aligned roll/pitch and the integrated yaw. On a
+    still headset roll/pitch must agree with the accelerometer and yaw drift
+    shows the residual gyro bias.
+    """
+    if len(gyro.samples) < MIN_SAMPLES or not accel.samples:
+        return {}
+    q = q_start = _quat_from_gravity(accel.samples[0])
+    ai = 0
+    kp = 2.0
+    for i in range(1, len(gyro.samples)):
+        dt = (gyro.timestamps[i] - gyro.timestamps[i - 1]) / QTIMER_HZ
+        while ai + 1 < len(accel.samples) and accel.timestamps[ai + 1] <= gyro.timestamps[i]:
+            ai += 1
+        w = list(gyro.samples[i])
+        a = accel.samples[ai]
+        na = math.sqrt(sum(v * v for v in a))
+        if na > 0:
+            vx, vy, vz = _rotate_inverse(q, (0.0, 0.0, 1.0))
+            ax, ay, az = (v / na for v in a)
+            ex, ey, ez = ay * vz - az * vy, az * vx - ax * vz, ax * vy - ay * vx
+            w = [w[0] + kp * ex, w[1] + kp * ey, w[2] + kp * ez]
+        q = _integrate(q, w, dt)
+    roll, pitch, yaw = _euler(q)
+    a = accel.samples[-1]
+    # Relative rotation in the world frame, and its twist about gravity (up):
+    # turning the headset on a table by 90 degrees reads +-90 here.
+    w0, x0, y0, z0 = q_start
+    rel = _multiply(q, [w0, -x0, -y0, -z0])
+    angle = 2 * math.acos(max(-1.0, min(1.0, abs(rel[0]))))
+    heading = 2 * math.atan2(rel[3], rel[0])
+    heading = (heading + math.pi) % (2 * math.pi) - math.pi
+    return {
+        "rotation_deg": round(math.degrees(angle), 3),
+        "heading_change_deg": round(math.degrees(heading), 3),
+        "quaternion_wxyz": [round(v, 6) for v in q],
+        "roll_deg": round(math.degrees(roll), 3),
+        "pitch_deg": round(math.degrees(pitch), 3),
+        "yaw_deg": round(math.degrees(yaw), 3),
+        "accel_roll_deg": round(math.degrees(math.atan2(a[1], a[2])), 3),
+        "accel_pitch_deg": round(math.degrees(math.atan2(-a[0], math.hypot(a[1], a[2]))), 3),
+    }
+
+
+def _quat_from_gravity(a: Sequence[float]) -> list[float]:
+    roll = math.atan2(a[1], a[2])
+    pitch = math.atan2(-a[0], math.hypot(a[1], a[2]))
+    cr, sr, cp, sp = math.cos(roll / 2), math.sin(roll / 2), math.cos(pitch / 2), math.sin(pitch / 2)
+    return [cr * cp, sr * cp, cr * sp, -sr * sp]
+
+
+def _integrate(q: Sequence[float], w: Sequence[float], dt: float) -> list[float]:
+    w0, w1, w2 = (v * dt / 2 for v in w)
+    a, b, c, d = q
+    q = [
+        a - b * w0 - c * w1 - d * w2,
+        b + a * w0 + c * w2 - d * w1,
+        c + a * w1 - b * w2 + d * w0,
+        d + a * w2 + b * w1 - c * w0,
+    ]
+    n = math.sqrt(sum(v * v for v in q))
+    return [v / n for v in q]
+
+
+def _multiply(p: Sequence[float], q: Sequence[float]) -> list[float]:
+    a, b, c, d = p
+    e, f, g, h = q
+    return [
+        a * e - b * f - c * g - d * h,
+        a * f + b * e + c * h - d * g,
+        a * g - b * h + c * e + d * f,
+        a * h + b * g - c * f + d * e,
+    ]
+
+
+def _rotate_inverse(q: Sequence[float], v: Sequence[float]) -> tuple[float, float, float]:
+    """Rotate world vector v into the body frame."""
+    w, x, y, z = q
+    x, y, z = -x, -y, -z
+    vx, vy, vz = v
+    tx, ty, tz = 2 * (y * vz - z * vy), 2 * (z * vx - x * vz), 2 * (x * vy - y * vx)
+    return (vx + w * tx + y * tz - z * ty, vy + w * ty + z * tx - x * tz, vz + w * tz + x * ty - y * tx)
+
+
+def _euler(q: Sequence[float]) -> tuple[float, float, float]:
+    w, x, y, z = q
+    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
+    yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    return roll, pitch, yaw
+
+
+def check_summary(summary: dict, rate: float) -> list[str]:
+    """Check the acceptance limits for a stationary headset; returns the failures."""
+    failures = []
+    for name in ("accel", "gyro"):
+        s = summary["streams"].get(name, {})
+        if s.get("samples", 0) < MIN_SAMPLE_SHARE * rate * summary["seconds"]:
+            failures.append(f"{name}: {s.get('samples', 0)} samples")
+            continue
+        # The SSC picks the sensor's next output data rate at or above the
+        # request and reports it (500 -> 500, which the ICM-42688 runs at 512 Hz).
+        configured = s.get("config", {}).get("sample_rate_hz")
+        if configured is None or configured < 0.95 * rate:
+            failures.append(f"{name}: configured rate {configured} Hz, requested {rate}")
+        elif s["rate_hz"] is None or abs(s["rate_hz"] - configured) > 0.05 * configured:
+            failures.append(f"{name}: measured rate {s['rate_hz']} Hz, configured {configured}")
+        if s["non_increasing_timestamps"]:
+            failures.append(f"{name}: {s['non_increasing_timestamps']} non-increasing timestamps")
+    accel = summary["streams"].get("accel", {})
+    if accel.get("norm_mean") is not None and abs(accel["norm_mean"] - STANDARD_GRAVITY) > GRAVITY_TOLERANCE:
+        failures.append(f"accel: |g| {accel['norm_mean']} m/s^2")
+    gyro = summary["streams"].get("gyro", {})
+    if gyro.get("mean") and max(abs(v) for v in gyro["mean"]) > GYRO_BIAS_MAX:
+        failures.append(f"gyro: mean {gyro['mean']} rad/s (not still, or uncalibrated)")
+    return failures
+
+
+# --- commands -------------------------------------------------------------
+
+
+def cmd_list(ssc: Ssc, args: argparse.Namespace) -> int:
+    """Print the sensors of each data type with their attributes."""
+    out = {}
+    for data_type in args.types:
+        out[data_type] = [
+            {"suid": f"{suid[1]:016x}{suid[0]:016x}", **ssc.attributes(suid)} for suid in ssc.find(data_type)
+        ]
+    print(json.dumps(out, indent=2))
+    return 0 if any(out.values()) else 1
+
+
+def take_event(stream: Stream, msg_id: int, ts: int, payload: bytes, csv: IO[str] | None) -> None:
+    """Add one event of a streamed sensor: a sample (also to the CSV), or the rate it runs at."""
+    fields = pb_parse(payload)
+    if msg_id == MSG_SENSOR_EVENT:
+        values = pb_floats(fields, 1)
+        stream.add(ts, values)
+        if csv and len(values) >= AXES:
+            csv.write(f"{stream.name},{ts},{values[0]:.7g},{values[1]:.7g},{values[2]:.7g}\n")
+    elif msg_id == MSG_PHYSICAL_CONFIG_EVENT and not stream.config:
+        rate = pb_first(fields, 1)
+        stream.config = {"sample_rate_hz": round(struct.unpack("<f", rate)[0], 3)} if rate else {}
+
+
+def cmd_stream(ssc: Ssc, args: argparse.Namespace) -> int:
+    """Stream the accelerometer and gyroscope and print a summary, checked with --check."""
+    streams = {}
+    suids = {}
+    for name in ("accel", "gyro"):
+        found = ssc.find(name)
+        if not found:
+            print(json.dumps({"status": "fail", "error": f"no {name} sensor"}))
+            return 1
+        suids[name] = found[0]
+        streams[name] = Stream(name)
+    by_suid = {suid: streams[name] for name, suid in suids.items()}
+    with contextlib.ExitStack() as files:
+        csv = files.enter_context(Path(args.csv).open("w")) if args.csv else None
+        if csv:
+            csv.write("sensor,qtimer_ticks,x,y,z\n")
+        try:
+            for suid in suids.values():
+                ssc.enable(suid, args.rate)
+            end = time.monotonic() + args.seconds
+            for suid, msg_id, ts, payload in ssc.events(1.0):
+                stream = by_suid.get(suid)
+                if stream is not None:
+                    take_event(stream, msg_id, ts, payload, csv)
+                if time.monotonic() > end:
+                    break
+        finally:
+            for suid in suids.values():
+                ssc.disable(suid)
+    summary = {
+        "schema": 1,
+        "seconds": args.seconds,
+        "requested_rate_hz": args.rate,
+        "streams": {name: s.summary() for name, s in streams.items()},
+    }
+    if args.orientation:
+        summary["orientation"] = orientation_from(streams["accel"], streams["gyro"])
+    failures = check_summary(summary, args.rate) if args.check else []
+    summary["status"] = ("fail" if failures else "pass") if args.check else "collected"
+    summary["failures"] = failures
+    print(json.dumps(summary, indent=2))
+    return 1 if failures else 0
+
+
+def pb_tree(data: bytes, depth: int = 0) -> list[list[Any]] | None:
+    """Decode an unknown message as far as possible.
+
+    Nested messages where the bytes parse completely, otherwise text or hex; None when the bytes are
+    no message.
+    """
+    try:
+        fields = pb_parse(data)
+    except (IndexError, ValueError, struct.error):
+        return None
+    out = []
+    for field, wire, value in fields:
+        decoded = value
+        if wire == WIRE_LENGTH:
+            nested = pb_tree(value, depth + 1) if depth < PB_TREE_DEPTH and value else None
+            if nested is not None:
+                decoded = nested
+            elif value and all(b in PRINTABLE for b in value):
+                decoded = value.decode()
+            else:
+                decoded = value.hex()
+        elif wire == WIRE_FIXED32:
+            decoded = {"f32": round(struct.unpack("<f", value)[0], 6), "u32": u32(value)}
+        elif wire == WIRE_FIXED64:
+            decoded = {"u64": u64(value)}
+        out.append([field, decoded])
+    return out
+
+
+def cmd_raw(ssc: Ssc, args: argparse.Namespace) -> int:
+    """Enable one sensor and print its events, decoded generically.
+
+    For sensors with vendor-specific messages.
+    """
+    found = ssc.find(args.type)
+    if not found:
+        print(json.dumps({"status": "fail", "error": f"no {args.type} sensor"}))
+        return 1
+    suid = found[0]
+    payload = pb_float(1, args.rate) if args.msg_id == MSG_CONFIG else bytes.fromhex(args.payload)
+    counts: dict[int, int] = {}
+    try:
+        ssc.request(client_request(suid, args.msg_id, payload))
+        end = time.monotonic() + args.seconds
+        while time.monotonic() < end:  # events() ends after a second without data
+            for ev_suid, msg_id, ts, data in ssc.events(1.0):
+                if ev_suid == suid:
+                    counts[msg_id] = counts.get(msg_id, 0) + 1
+                    if counts[msg_id] <= args.max_print:
+                        print(
+                            json.dumps({"msg_id": msg_id, "ts": ts, "fields": pb_tree(data), "hex": data.hex()}),
+                            flush=True,
+                        )
+                if time.monotonic() > end:
+                    break
+    finally:
+        ssc.disable(suid)
+    print(json.dumps({"type": args.type, "seconds": args.seconds, "events": counts}))
+    return 0 if counts else 1
+
+
+def cmd_wait(
+    args: argparse.Namespace,
+    connect: Callable[[float], SensorService] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], object] = time.sleep,
+) -> int:
+    """Wait until the sensor service lists the accelerometer and the gyroscope.
+
+    For about 35 s after the DSP boots it loads its registry, and lookups come back
+    empty (or the service is not there yet); a driver that probes then finds no IMU.
+    """
+    connect = connect or (Ssc)
+    start = clock()
+    deadline = start + args.timeout
+    error = "not tried"
+    while True:
+        try:
+            ssc = connect(min(5.0, max(0.1, deadline - clock())))
+            try:
+                if ssc.find("accel") and ssc.find("gyro"):
+                    print(json.dumps({"status": "pass", "seconds": round(clock() - start, 1)}))
+                    return 0
+                error = "no accelerometer and gyroscope listed yet"
+            finally:
+                ssc.sock.close()
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            error = str(exc)
+        if clock() >= deadline:
+            print(json.dumps({"status": "fail", "seconds": round(clock() - start, 1), "error": error}))
+            return 1
+        # The service lists the IMU within moments of being ready: the session waits for it.
+        sleep(0.2)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run one subcommand against the sensor service."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("list")
+    p.add_argument("types", nargs="*", default=["accel", "gyro", "mag", "pressure", "sensor_temperature"])
+    p = sub.add_parser("wait", help="until the accelerometer and gyroscope are listed")
+    p.add_argument("--timeout", type=float, default=120.0, help="seconds")
+    p = sub.add_parser("stream")
+    p.add_argument("--rate", type=float, default=500.0, help="Hz; 500 runs the ICM-42688 at 512 Hz, 1000 at 1024 Hz")
+    p.add_argument("--seconds", type=float, default=10.0)
+    p.add_argument("--csv")
+    p.add_argument("--orientation", action="store_true")
+    p.add_argument("--check", action="store_true", help="fail unless the stationary acceptance limits hold")
+    p = sub.add_parser("raw", help="enable one sensor type and print its events, decoded generically")
+    p.add_argument("type")
+    p.add_argument("--rate", type=float, default=100.0, help="Hz, for the standard config request")
+    p.add_argument("--msg-id", type=int, default=MSG_CONFIG, help="request message id (default: std config)")
+    p.add_argument("--payload", default="", help="hex payload for a non-standard request")
+    p.add_argument("--seconds", type=float, default=5.0)
+    p.add_argument("--max-print", type=int, default=20, help="events printed per message id")
+    parser.add_argument("-v", "--verbose", action="store_true", help="log QMI traffic to stderr")
+    args = parser.parse_args(argv)
+    global VERBOSE  # noqa: PLW0603  # the -v switch, set once before any QMI traffic
+    VERBOSE = args.verbose
+    if args.command == "wait":
+        return cmd_wait(args)
+    try:
+        ssc = Ssc()
+    except (OSError, RuntimeError) as exc:
+        print(json.dumps({"status": "fail", "error": str(exc)}))
+        return 1
+    return {"list": cmd_list, "stream": cmd_stream, "raw": cmd_raw}[args.command](ssc, args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

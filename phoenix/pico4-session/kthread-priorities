@@ -1,0 +1,35 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# Real-time priority for the kernel threads between the compositor and the panels
+# (docs/session.md). SteamVR's compositor and render threads run at SCHED_RR 99.
+#
+# These are the Frame's values, from its set_kernel_thread_priorities.sh, whose
+# service the image masks: that script stops at its first entry here, since the soundwire interrupt
+# threads refuse taskset and it runs with set -e. What hands the compositor's jobs to the GPU is a
+# workqueue (ring0..ring3, one per ringbuffer), an ordinary kworker unless its prio attribute,
+# Valve's addition, says otherwise. The script's Frame-only names have no counterpart here.
+# PICO4_SYSFS replaces /sys for tests.
+set -euo pipefail
+S=${PICO4_SYSFS:-/sys}
+found=0
+
+while read -r pid comm; do
+	case "$comm" in
+	gpu-worker | crtc_event:*) chrt -r -p 99 "$pid" ;;
+	atomic-worker-*) chrt -r -p 88 "$pid" ;;
+	spi0 | irq/*-soundwi*)
+		chrt -r -p 80 "$pid"
+		taskset -p 0x0f "$pid" > /dev/null || true
+		;;
+	*) continue ;;
+	esac
+	echo "$comm ($pid)"
+	found=$((found + 1))
+done < <(ps --ppid 2 -o pid=,comm=)
+for wq in msm ring0 ring1 ring2 ring3 dsi_drm_work_0 dsi_drm_work_1; do
+	if [[ -e $S/bus/workqueue/devices/$wq/prio ]]; then
+		echo 90 > "$S/bus/workqueue/devices/$wq/prio"
+		echo "workqueue $wq: 90"
+	fi
+done
+[[ $found -gt 0 ]] || { echo "no GPU or display kernel threads found" >&2; exit 1; }

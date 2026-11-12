@@ -1,0 +1,11 @@
+[Unit]
+Description=PICO 4 head IMU through the Qualcomm Sensor Core
+ConditionPathExists=/usr/lib/firmware/slpi.mdt
+ConditionPathExists=/sys/class/remoteproc
+Wants= pico4-slpi.service pico4-sensorspd.service
+Wants=pico4-imu-ready.service
+# Reached once the IMU is listed: units after the target can probe it.
+After=pico4-imu-ready.service
+
+[Install]
+WantedBy=multi-user.target

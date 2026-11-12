@@ -1,0 +1,67 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Unlicense
+"""Puts the image's SteamVR settings into the session user's steamvr.vrsettings before SteamVR starts.
+
+/home is copied from the image only on an install's first boot, and SteamVR rewrites the file
+itself, so a newer image's settings would never reach it. Every key of the image's file
+(/usr/share/pico4/steamvr.vrsettings) is set to the image's value; keys the image does not
+name (SteamVR's own, the user's) stay as they are. A file that does not parse is replaced.
+See docs/session.md, SteamVR configuration.
+
+    steamvr-settings [IMAGE_FILE [USER_FILE]]
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+IMAGE = "/usr/share/pico4/steamvr.vrsettings"
+USER = str(Path("~/.local/share/Steam/config/steamvr.vrsettings").expanduser())
+
+
+def merge(image: dict[str, Any], user: dict[str, Any]) -> bool:
+    """Set the image's keys in user (sections are merged, not replaced); True if anything changed."""
+    changed = False
+    for key, value in image.items():
+        if isinstance(value, dict) and isinstance(user.get(key), dict):
+            changed |= merge(value, user[key])
+        elif user.get(key, object()) != value:
+            user[key] = value
+            changed = True
+    return changed
+
+
+def main(argv: Sequence[str]) -> int:
+    """Merge the image's file into the user's, replacing it atomically when anything changed."""
+    image_path = argv[1] if argv[1:] else IMAGE
+    user_path = argv[2] if argv[2:] else USER
+    image = json.loads(Path(image_path).read_text(encoding="utf-8"))
+    try:
+        user = json.loads(Path(user_path).read_text(encoding="utf-8"))
+        if not isinstance(user, dict):
+            user = {}
+    except (OSError, ValueError):
+        user = {}
+    if not merge(image, user):
+        return 0
+    Path(user_path).parent.mkdir(parents=True, exist_ok=True)
+    # Atomically: SteamVR must never read half a file.
+    fd, tmp = tempfile.mkstemp(dir=Path(user_path).parent, prefix=".steamvr.vrsettings.")
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(user, f, indent=4, sort_keys=True)
+        f.write("\n")
+    Path(tmp).replace(user_path)
+    print(f"steamvr-settings: {user_path} updated from {image_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

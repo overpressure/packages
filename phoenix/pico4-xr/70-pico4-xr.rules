@@ -1,0 +1,16 @@
+# The XR hardware for the session user (docs/session.md). In Valve's VR session
+# SteamVR's driver_monado opens it as steamos; the Monado service runs as root.
+# The controller radio (station, spidev0.0) and the lens motor MCU (ttyHS1).
+SUBSYSTEM=="spidev", KERNEL=="spidev0.0", GROUP="video", MODE="0660"
+# The switch of the station's supply (the device tree's station-power): for the same group, so
+# that the driver in SteamVR can power-cycle the station.
+SUBSYSTEM=="platform", KERNEL=="station-power", ACTION=="add", RUN+="/bin/chgrp video /sys%p/state", RUN+="/bin/chmod 0664 /sys%p/state"
+SUBSYSTEM=="tty", KERNEL=="ttyHS1", GROUP="video", MODE="0660"
+# The panels' backlight: SteamVR's driver switches it in standby.
+SUBSYSTEM=="backlight", KERNEL=="pico4-panel", RUN+="/usr/bin/chgrp video /sys%p/bl_power", RUN+="/usr/bin/chmod g+w /sys%p/bl_power"
+# The tracking cameras' nodes and media graph.
+SUBSYSTEM=="video4linux", GROUP="video", MODE="0660"
+SUBSYSTEM=="media", GROUP="video", MODE="0660"
+# The display, for SteamVR's compositor.
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", GROUP="video", MODE="0660"
+SUBSYSTEM=="dma_heap", GROUP="video", MODE="0660"

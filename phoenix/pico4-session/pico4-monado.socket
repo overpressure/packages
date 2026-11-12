@@ -1,0 +1,17 @@
+# Monado's IPC socket (docs/session.md). Monado runs as a system service here, so
+# root owns the display, sensors, cameras and the controller radio; clients of
+# any user reach it through this socket. OpenXR clients look for
+# $XDG_RUNTIME_DIR/monado_comp_ipc: the session links it here, and root
+# clients set XDG_RUNTIME_DIR=/run/pico4-monado.
+[Unit]
+Description=Monado OpenXR runtime socket (PICO 4)
+
+[Socket]
+ListenStream=/run/pico4-monado/monado_comp_ipc
+DirectoryMode=0755
+SocketMode=0666
+RemoveOnStop=true
+FlushPending=true
+
+[Install]
+WantedBy=sockets.target

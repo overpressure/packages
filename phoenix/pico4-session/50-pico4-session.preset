@@ -1,0 +1,4 @@
+# The units pico4-session starts with the system.
+enable pico4-kthread-priorities.service
+enable pico4-monado.socket
+enable pico4-session.service

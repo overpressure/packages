@@ -1,0 +1,18 @@
+# The panels' mode on msm: the DSI connector stays unprobed (status unknown, no
+# modes) until a DRM master asks for it, which the installed system's boot splash does. Without
+# it SteamVR's compositor sees a 1024x768 output without a name and finds no direct-mode display.
+# Writing "detect" to the connector's status probes it.
+[Unit]
+Description=Probe the panels' connector (msm)
+DefaultDependencies=no
+After=systemd-udevd.service
+Before=pico4-session.service sysinit.target
+ConditionPathExistsGlob=/sys/class/drm/card*-DSI-*/status
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'for c in /sys/class/drm/card*-DSI-*/status; do echo detect > "$c"; done'
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,112 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# The installed system's first process (docs/install.md). Valve's kernel mounts this system image
+# from super read-only as the root (root=PARTLABEL=super ro init=/usr/libexec/pico4/preinit) and
+# starts this script. It applies the storage policy, lays the data partition onto the image and
+# executes systemd. When that fails it reboots into recovery, where the maintenance stage 1 starts.
+#
+# The data partition (userdata, ext4 "pico4-data") holds what changes: /etc's changes (an
+# overlay), /var, /home and /root. On the first boot, and for /var/lib/pacman after each new
+# system image, they start as the image has them.
+export PATH=/usr/bin
+umask 022
+# A failed exec of systemd returns here instead of ending PID 1 (a panic).
+shopt -s execfail
+exec </dev/null >/dev/kmsg 2>&1
+
+mount -t proc -o nosuid,nodev,noexec proc /proc
+mount -t sysfs -o nosuid,nodev,noexec sysfs /sys
+mount -t tmpfs -o nosuid,nodev,mode=0755 tmpfs /run
+. /usr/libexec/pico4/lib.sh
+mkdir -p "$P4_RUN"
+echo on > /proc/sys/kernel/printk_devkmsg 2>/dev/null
+
+# A one-shot test image in recovery (pico4.failover=reboot) reboots plainly instead: a reboot into
+# recovery would start it again.
+fail() {
+	sync
+	if [ "$(stage1_arg failover recovery)" = reboot ]; then
+		log "preinit: $*; rebooting"
+		exec /usr/bin/pico4-reboot
+	fi
+	log "preinit: $*; rebooting into recovery"
+	exec /usr/bin/pico4-reboot recovery
+}
+
+log "preinit: system image on $(findmnt -no SOURCE /), $(uname -r)"
+# Powered on by the USB cable: charge, as PICO OS does, until the power key starts the system.
+unit=""
+if [ "$(cmdline_arg androidboot.mode)" = charger ]; then
+	unit=pico4-charger.target
+else
+	# A sign of life in the lenses until pico4-splash.service takes the display.
+	/usr/bin/pico4-splash 300 </dev/null >/dev/null 2>/dev/kmsg &
+fi
+
+# Valve's kernel starts with the performance governor; schedutil as PICO OS runs (pico4.cpugov=keep
+# leaves it). The session's own units change single policies later.
+gov=$(stage1_arg cpugov schedutil)
+if [ "$gov" != keep ]; then
+	for p in /sys/devices/system/cpu/cpufreq/policy*; do
+		grep -qw "$gov" "$p/scaling_available_governors" 2>/dev/null && echo "$gov" > "$p/scaling_governor"
+	done
+	log "preinit: cpufreq governor $gov"
+fi
+
+# Every disk and partition read-only as it is (the data partition is the one exception).
+/usr/libexec/pico4/devnode sweep
+data=$(readlink -f /dev/block/by-name/userdata 2>/dev/null)
+[ -b "$data" ] || fail "no userdata partition"
+[ "$(ext_label "$data" 2>/dev/null)" = pico4-data ] || fail "userdata holds no pico4-data file system"
+# A mainline kernel counts a disk's read-only flag for its partitions too, so the data partition's
+# disk becomes writable as well; its other partitions keep their own flags.
+blockdev --setrw "$data" || fail "could not make userdata writable"
+if [ "$(cat "/sys/class/block/${data##*/}/ro")" != 0 ]; then
+	disk=$(readlink -f "/sys/class/block/${data##*/}/..")
+	blockdev --setrw "/dev/${disk##*/}" || fail "could not make ${disk##*/} writable"
+fi
+mount -t ext4 -o noatime "$data" /data || fail "mounting the data partition failed"
+
+# Boots that started systemd but never reached the graphical target (a panic, a hang the watchdog
+# ended) are counted; pico4-boot-ok.service clears the count there. After two, this boot goes to
+# the maintenance stage 1 instead. Charger mode neither counts nor clears.
+if [ -z "$unit" ]; then
+	attempts=$(/usr/libexec/pico4/boot-attempts start)
+	rc=$?
+	[ $rc = 3 ] && fail "$attempts"
+	[ $rc = 0 ] || log "preinit: counting the boot failed ($rc)"
+	[ -z "$attempts" ] || log "preinit: $attempts"
+fi
+
+image=$(cat /usr/share/pico4/system-image 2>/dev/null)
+if [ ! -e /data/.pico4-initialized ]; then
+	log "preinit: first boot of the installed system: data from the image"
+	for dir in var root home; do
+		mkdir -p "/data/$dir"
+		cp -a -n "/$dir/." "/data/$dir/" || fail "copying /$dir"
+	done
+	mkdir -p /data/etc/upper /data/etc/work
+	touch /data/.pico4-initialized
+elif [ "$(cat /data/.pico4-system-image 2>/dev/null)" != "$image" ]; then
+	# A new system image: its package database replaces the old one.
+	log "preinit: new system image: package database from the image"
+	rm -rf /data/var/lib/pacman
+	cp -a /var/lib/pacman /data/var/lib/ || fail "copying the package database"
+fi
+echo "$image" > /data/.pico4-system-image
+# Without the inodes index: an update replaces the lower /etc whole, and with the index (a
+# mainline kernel's default) the upper directory stays tied to the image it was made with
+# ("failed to verify upper root origin").
+mount -t overlay overlay -o "lowerdir=/etc,upperdir=/data/etc/upper,workdir=/data/etc/work,index=off" /etc ||
+	fail "mounting the /etc overlay failed"
+for dir in var root home; do
+	mount --bind "/data/$dir" "/$dir" || fail "mounting /$dir"
+done
+# Stable per headset, so journals of different boots belong together.
+device_serial | md5sum | cut -c1-32 > /etc/machine-id
+
+log "preinit: data $(df -k /data | awk 'NR==2 {print int($3/1048576)}') of" \
+	"$(df -k /data | awk 'NR==2 {print int($2/1048576)}') GiB used; executing systemd${unit:+ into $unit}"
+# shellcheck disable=SC2093 # execfail: a failed exec returns, and fail reboots
+exec /usr/lib/systemd/systemd ${unit:+--unit=$unit}
+fail "systemd did not start"

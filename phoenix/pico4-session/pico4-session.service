@@ -1,0 +1,44 @@
+# The session of the Frame's user, steamos, without a display manager
+# (docs/session.md): a logind session through PAM, whose user manager runs Valve's
+# session target, gamescope-session.target unless /etc/pico4/session.conf
+# (PICO4_SESSION_TARGET) names another.
+[Unit]
+Description=PICO 4 user session (steamos)
+# Valve's session needs the GPU's render node.
+ConditionPathExists=/dev/dri/renderD128
+# After the head IMU is listed: SteamVR's driver_monado probes it when SteamVR starts.
+After=systemd-user-sessions.service systemd-logind.service pico4-sensors.target
+# PICO OS's head tracker for SteamVR's driver_monado (docs/xr.md#head-tracking).
+Wants=pico4-slamd.service
+# PICO OS's CPU limits for VR while the session runs (docs/cooling.md#vr-cpu-limits).
+Wants=pico4-vr-performance.service
+After=pico4-vr-performance.service
+# The session takes VT 1 in getty's place, as sddm does on the Frame.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+# A session that ends by itself starts again, as sddm's Relogin=true does on the Frame: a
+# SteamVR that ends without a stop being asked for ends it (steamvr-ended), as does a SteamVR
+# that failed for good (pico4-steamvr-failed.service). After five starts in ten minutes the
+# session stays stopped until the next boot or a deliberate start, which resets the count: a
+# crash loop ends after about five controller radio resets.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+User=steamos
+PAMName=pico4-session
+EnvironmentFile=-/etc/pico4/session.conf
+# logind gives seat0's sessions a VT: pam_systemd takes its number from the environment.
+Environment=XDG_VTNR=1
+ExecStart=/usr/libexec/pico4/session
+Restart=always
+RestartSec=5
+# Restarts do not pass through the failed state.
+RestartMode=direct
+KillMode=mixed
+# Valve's units stop one after another: gamescope gets 10 s, SteamVR 20 s. The default 15 s
+# (system.conf.d) killed stops in which gamescope ignored SIGTERM.
+TimeoutStopSec=45
+
+[Install]
+WantedBy=graphical.target

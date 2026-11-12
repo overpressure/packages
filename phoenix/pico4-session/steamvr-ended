@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# SteamVR's unit ended (its ExecStopPost). With a stop job someone asked for it, and the session goes
+# down as asked. Without one SteamVR died or quit by itself, and the unit would restart it next to a
+# gamescope that stays bound to the compositor which is gone: every DMA-BUF import fails, and Steam's
+# panel never shows. The session ends instead, as after SteamVR's start limit, and
+# pico4-session.service starts all of it again (docs/session.md).
+job=$(systemctl --user show steamvr.service -p Job --value)
+[ -n "$job" ] && [ "$job" != 0 ] && exit 0
+exec systemctl --user --no-block stop gamescope-session.target

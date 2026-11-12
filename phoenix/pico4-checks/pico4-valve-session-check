@@ -1,0 +1,186 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# Valve's VR session on the PICO 4 (roadmap step 6, docs/session.md): runs Valve's
+# gamescope-session.target through pico4-session.service for a short while, then
+# returns to the configured session. Checks that SteamVR's compositor drives the
+# panels (counted from the kernel's own events by msm-frame-stats) and that SteamVR tracks the headset and both controllers. Prints one
+# JSON object; exit status 0 only if it passed.
+# "status" is that integration verdict. "performance" is a verdict of its own
+# (session-performance): frame rate and pacing over the run after startup,
+# against the limits it lists.
+#
+#   pico4-valve-session-check [--seconds SECONDS]
+#
+# The session keeps the GPU busy and heats the headset quickly: SECONDS (default
+# 30) bounds the run after startup. The hottest thermal zone and the fan daemon's
+# state (docs/cooling.md) are recorded before and after. Validated on the host by
+# devices/phoenix/tooling/userspace.py (validate_valve_session).
+set -u
+seconds=30
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--seconds) seconds=$2; shift ;;
+	*) echo "usage: $0 [--seconds SECONDS]" >&2; exit 2 ;;
+	esac
+	shift
+done
+
+json_str() {
+	local s=${1//\\/\\\\}
+	s=${s//\"/\\\"}
+	s=${s//$'\n'/\\n}
+	s=${s//$'\t'/ }
+	printf '"%s"' "$s"
+}
+json_list() {
+	local first=1 item
+	printf '['
+	while IFS= read -r item; do
+		[ -n "$item" ] || continue
+		[ $first = 1 ] || printf ','
+		json_str "$item"
+		first=0
+	done
+	printf ']'
+}
+
+user=steamos
+uid=$(id -u "$user")
+home=$(getent passwd "$user" | cut -d: -f6)
+logs=$home/.local/share/Steam/logs
+conf=/etc/pico4/session.conf
+work=/run/pico4-valve-session
+errors=()
+user_systemctl() {
+	runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" \
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" systemctl --user "$@"
+}
+max_temp() { # hottest thermal zone, degrees C
+	cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | awk '$1 < 200000 && $1 > m {m = $1} END {printf "%.1f", m / 1000}'
+}
+vrcmd() {
+	runuser -u "$user" -- env "HOME=$home" "XDG_RUNTIME_DIR=/run/user/$uid" \
+		timeout 5 /opt/steamvr/bin/linuxarm64/vrcmd "$@"
+}
+fan_state() { # pico4-fan's duty, RPM and hottest mean, or null without the daemon
+	local s
+	s=$(pico4-fan state 2>/dev/null)
+	if grep -q '^{' <<<"$s"; then printf '%s' "$s"; else printf null; fi
+}
+
+# Valve's session for the duration of the check.
+saved=""
+[ -s "$conf" ] && saved=$(cat "$conf")
+rm -rf "$work"
+install -d -o "$user" -m 0755 "$work"
+rm -f "$logs"/*.txt
+# driver_monado in SteamVR owns the hardware: the Monado service must not hold it.
+systemctl stop pico4-monado.service
+temp_before=$(max_temp)
+fan_before=$(fan_state)
+echo PICO4_SESSION_TARGET=gamescope-session.target > "$conf"
+# Deliberate restarts do not count against the session's start limit (pico4-session.service).
+systemctl reset-failed pico4-session.service
+systemctl restart pico4-session.service
+
+# Startup: the compositor's log.
+startup=-1
+# A headset lying still off the head enters SteamVR's standby after power.turnOffScreensTimeout
+# (5 s), which pauses the compositor (pauseCompositorOnStandby, the Frame's default) and leaves
+# nothing to measure: no standby while the check runs, as soon as vrserver answers.
+standby_off=false
+for i in $(seq 180); do
+	if [ "$standby_off" = false ] && pgrep -u "$user" -x vrserver >/dev/null &&
+		vrcmd --set-settings-float power.turnOffScreensTimeout 3600 >/dev/null 2>&1; then
+		standby_off=true
+	fi
+	if grep -qs "Startup Complete" "$logs/vrcompositor.txt"; then
+		startup=$i
+		break
+	fi
+	sleep 1
+done
+[ "$startup" -ge 0 ] || errors+=("SteamVR's compositor did not start presenting within 180 s")
+# SteamVR's startup stalls the compositor a few times while the dashboard starts: the measured
+# window starts 20 s later.
+settle=0
+if [ "$startup" -ge 0 ]; then
+	settle=20
+	sleep "$settle"
+	/usr/libexec/pico4/msm-frame-stats record "$seconds" "$(pgrep -u "$user" -x vrcompositor | head -n 1)" \
+		"$work/frames.json" >/dev/null 2>&1 || errors+=("msm's frame events could not be recorded")
+fi
+
+target_state=$(user_systemctl is-active gamescope-session.target 2>/dev/null)
+steamvr_state=$(user_systemctl is-active steamvr.service 2>/dev/null)
+gamescope_state=$(user_systemctl is-active gamescope-session.service 2>/dev/null)
+# Before the first-run setup is finished or skipped, steam.service waits for it and the
+# target cannot become active; the setup's panel runs in its place (docs/session.md#first-run-setup).
+first_run="done"
+setup_state=""
+if [ "$target_state" != active ] && HOME=$home /usr/libexec/pico4/wait-first-run --pending; then
+	first_run=pending
+	setup_state=$(user_systemctl is-active pico4-onboarding.service 2>/dev/null)
+fi
+failed=$(user_systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}')
+started=false
+grep -qs "Startup Complete" "$logs/vrcompositor.txt" && started=true
+gamescope_client=false
+grep -qs "External connection from /usr/bin/gamescope" "$logs/vrcompositor.txt" && gamescope_client=true
+asserts=$(grep -s -c "ASSERT" "$logs/vrcompositor.txt")
+present_wait_errors=$(grep -s -c "failed to wait for present" "$logs/vrcompositor.txt")
+stats=$(cat "$work/frames.json" 2>/dev/null)
+grep -q '^{' <<<"$stats" || stats=null
+# SteamVR's own view of the tracked devices: index, position (m), rotation (rad).
+devices=$(runuser -u "$user" -- env "HOME=$home" "XDG_RUNTIME_DIR=/run/user/$uid" \
+	timeout 3 /opt/steamvr/bin/linuxarm64/vrcmd --pollposes 2>/dev/null |
+	awk -F, 'NF == 7 && $1 ~ /^[0-9]+$/ {
+			# vrcmd now and then prints a line with an empty or cut value ("3."): not valid JSON.
+			for (i = 2; i <= 7; i++) if ($i !~ /^ *-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$/) next
+			last[$1] = $0}
+		END {printf "["; n = 0; for (i = 0; i < 16; i++) if (i in last) {split(last[i], v, ",");
+			printf "%s{\"index\":%d,\"position\":[%s,%s,%s],\"rotation\":[%s,%s,%s]}", n++ ? "," : "",
+				v[1], v[2], v[3], v[4], v[5], v[6], v[7]} printf "]"}')
+grep -q '^\[' <<<"$devices" || devices="[]"
+temp_after=$(max_temp)
+fan_after=$(fan_state)
+performance=$(/usr/libexec/pico4/session-performance "$work/frames.json" "${temp_after:-nan}" 2>/dev/null)
+grep -q '^{' <<<"$performance" || performance='{"status":"failed","failures":["no performance verdict"]}'
+
+if [ "$first_run" = pending ]; then
+	[ "$setup_state" = active ] || errors+=("the first-run setup's panel is $setup_state")
+else
+	[ "$target_state" = active ] || errors+=("gamescope-session.target is $target_state")
+fi
+[ "$steamvr_state" = active ] || errors+=("steamvr.service is $steamvr_state")
+[ "$gamescope_state" = active ] || errors+=("gamescope-session.service is $gamescope_state")
+[ "$started" = true ] || errors+=("SteamVR's compositor did not complete its startup")
+[ "$gamescope_client" = true ] || errors+=("gamescope did not connect to SteamVR")
+[ "${asserts:-0}" = 0 ] || errors+=("SteamVR's compositor asserted")
+[ "$stats" != null ] || errors+=("no frame statistics from msm's events")
+grep -q '"index":2' <<<"$devices" || errors+=("SteamVR does not report the headset and both controllers")
+
+# Back to the configured session, with SteamVR's standby timeout.
+[ "$standby_off" = false ] || vrcmd --set-settings-float power.turnOffScreensTimeout 5 >/dev/null 2>&1 ||
+	errors+=("SteamVR's standby timeout could not be set back")
+if [ -n "$saved" ]; then printf '%s\n' "$saved" > "$conf"; else rm -f "$conf"; fi
+systemctl reset-failed pico4-session.service
+systemctl restart pico4-session.service
+restored=$(systemctl is-active pico4-session.service)
+[ "$restored" = active ] || errors+=("pico4-session.service is $restored after the check")
+
+status=passed
+[ ${#errors[@]} = 0 ] || status=failed
+printf '{"schema":1,"status":%s' "$(json_str "$status")"
+printf ',"errors":%s' "$(printf '%s\n' "${errors[@]+"${errors[@]}"}" | json_list)"
+printf ',"seconds":%s,"startup_seconds":%s,"settle_seconds":%s' "$seconds" "$startup" "$settle"
+printf ',"session":{"target":"gamescope-session.target","target_state":%s,"steamvr":%s,"gamescope":%s,"failed_units":%s,"restored":%s' \
+	"$(json_str "$target_state")" "$(json_str "$steamvr_state")" "$(json_str "$gamescope_state")" \
+	"$(json_list <<<"$failed")" "$(json_str "$restored")"
+printf ',"first_run":%s,"setup":%s}' "$(json_str "$first_run")" "$(json_str "$setup_state")"
+printf ',"compositor":{"started":%s,"gamescope_client":%s,"asserts":%s,"present_wait_errors":%s}' \
+	"$started" "$gamescope_client" "${asserts:-0}" "${present_wait_errors:-0}"
+printf ',"frames":%s,"devices":%s,"max_temp_c":{"before":%s,"after_run":%s}' "$stats" "$devices" \
+	"${temp_before:-null}" "${temp_after:-null}"
+printf ',"fan":{"before":%s,"after_run":%s},"performance":%s}\n' "$fan_before" "$fan_after" "$performance"
+[ "$status" = passed ]

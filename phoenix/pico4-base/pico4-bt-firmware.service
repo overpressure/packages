@@ -1,0 +1,16 @@
+# The Bluetooth controller set up again with the image's firmware, which the kernel's first setup ran
+# too early for (docs/userspace.md). Before bluetoothd, as the address.
+[Unit]
+Description=PICO 4 Bluetooth controller with its firmware
+DefaultDependencies=no
+After=local-fs.target
+Before=bluetooth.service pico4-bt-address.service
+ConditionPathExists=/usr/lib/firmware/qca/htbtfw20.tlv
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/bt-firmware
+
+[Install]
+WantedBy=multi-user.target

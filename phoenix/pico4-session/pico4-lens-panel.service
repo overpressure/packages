@@ -1,0 +1,10 @@
+# The lens distance in SteamVR's dashboard (docs/xr.md#lens-distortion-and-ipd). It runs with SteamVR.
+[Unit]
+Description=Lens distance panel in SteamVR's dashboard
+PartOf=steamvr.service
+After=steamvr.service
+
+[Service]
+ExecStart=/usr/bin/pico4-lens-panel
+Restart=on-failure
+RestartSec=5

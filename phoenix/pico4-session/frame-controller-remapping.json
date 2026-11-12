@@ -1,0 +1,20 @@
+{
+  "from_controller_type": "frame_controller",
+  "priority": 93,
+  "simulate_controller_type": false,
+  "simulate_render_model": false,
+  "simulate_HMD": false,
+  "autoremappings": [
+    {"from": "/user/hand/right/input/grip", "to": "/user/hand/right/input/grip"},
+    {"from": "/user/hand/right/input/trigger", "to": "/user/hand/right/input/trigger"},
+    {"from": "/user/hand/right/input/thumbstick", "to": "/user/hand/right/input/joystick"},
+    {"from": "/user/hand/left/input/dpad_down", "to": "/user/hand/left/input/x", "mirror": false},
+    {"from": "/user/hand/left/input/dpad_left", "to": "/user/hand/left/input/y", "mirror": false},
+    {"from": "/user/hand/left/input/dpad_right", "to": "/user/hand/left/input/y", "mirror": false},
+    {"from": "/user/hand/left/input/dpad_up", "to": "/user/hand/left/input/y", "mirror": false},
+    {"from": "/user/hand/right/input/a", "to": "/user/hand/right/input/a", "mirror": false},
+    {"from": "/user/hand/right/input/b", "to": "/user/hand/right/input/b", "mirror": false},
+    {"from": "/user/hand/right/input/x", "to": "/user/hand/right/input/b", "mirror": false},
+    {"from": "/user/hand/right/input/y", "to": "/user/hand/right/input/b", "mirror": false}
+  ]
+}

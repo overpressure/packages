@@ -1,0 +1,7 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# The Steam client's way to Valve's steamos-update (docs/session.md#the-steam-client). SteamOS ships
+# this wrapper with its updater client, which is not installed here, so the client's OS update check
+# ended with "command not found" (127) every time. steamos-update needs no root here: it asks the
+# image's atomupd-manager, which answers as an up-to-date system ("No update available", exit 7).
+exec /usr/bin/steamos-update "$@"

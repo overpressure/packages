@@ -1,0 +1,196 @@
+# The PICO 4's system around Valve's userspace: preinit (the first process: boot count, data partition,
+# charger mode), the read-only storage policy and the recovery deadline, PICO OS's persist partition, the
+# USB link to the PC (gadget, network, the PC as a last-resort gateway), Wi-Fi and Bluetooth with their
+# addresses from persist, the wall clock, the firmware probes (Wi-Fi, video codec, panels), zram swap and the
+# system's policy files. preinit and charger mode source stage 1's lib.sh, which the image takes from stage 1.
+# The preset enables the services; the tests run in the build.
+pkgname=pico4-base
+pkgver=1
+pkgrel=1
+pkgdesc="PICO 4 system: preinit, storage and recovery policy, USB link, network, clock, firmware probes"
+arch=(any)
+url="https://github.com/overpressure/overpressure/tree/main/devices/phoenix/docs"
+license=(Unlicense)
+depends=(bash python systemd)
+backup=(etc/NetworkManager/conf.d/50-pico4-usb.conf
+        etc/NetworkManager/conf.d/50-pico4-wifi-address.conf
+        etc/NetworkManager/conf.d/50-pico4-wifi-autoconnect.conf
+        etc/iwd/main.conf
+        etc/ssh/sshd_config.d/50-pico4.conf
+        etc/sysctl.d/50-pico4-console.conf
+        etc/sysctl.d/50-pico4-memory.conf
+        etc/systemd/coredump.conf.d/50-pico4-limit.conf
+        etc/systemd/system/home.mount)
+source=(50-pico4-usb.conf
+        50-pico4-wifi-address.conf
+        50-pico4-wifi-autoconnect.conf
+        main.conf
+        sshd_config.d-50-pico4.conf
+        50-pico4-console.conf
+        50-pico4-memory.conf
+        50-pico4-limit.conf
+        home.mount
+        journald.conf.d-50-pico4.conf
+        10-pico4-wlan.link
+        50-pico4-usb.network
+        system.conf.d-50-pico4.conf
+        emergency.service.d-pico4.conf
+        rescue.service.d-pico4.conf
+        pico4-venus.conf
+        pico4-boot-ok.service
+        pico4-bt-address.service
+        pico4-bt-firmware.service
+        pico4-charger.service
+        pico4-charger.target
+        pico4-clock.service
+        pico4-panel-probe.service
+        pico4-persist.service
+        pico4-recovery-watch.service
+        pico4-splash.service
+        pico4-storage-ro.service
+        pico4-usb-gadget.service
+        pico4-usb-internet.service
+        pico4-venus-probe.service
+        pico4-wlan-address.service
+        pico4-wlan-probe.service
+        pico4-zram-swap.service
+        pico4-usb-gadget.conf
+        00-pico4-devnodes.rules
+        boot-attempts
+        bt-address
+        bt-firmware
+        charger
+        clock
+        devnode
+        fail-to-fastboot
+        persist
+        preinit
+        remoteproc-boot
+        usb-gadget
+        usb-internet
+        venus-probe
+        wlan-address
+        wlan-probe
+        vrdevice_path
+        test_clock.py test_config.py test_qca6390.py test_usb_internet.py
+        test_boot_attempts.sh test_charger.sh
+        50-pico4-base.preset)
+sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
+            'a4671220f5b6aa835752b9d43439895ab33fec8cb4ef6604b7675a447ebeee70'
+            '7824a2b49644845d9ec8328d8a274069d83b302c2408a12d4624515aefa5077a'
+            '7fbbc7e4ceca60160db6e03851e1f8984b456d6c8d3d3d1d073d428d15d9bc95'
+            '6bd3a42f445a9acf0cc449e75d5032e2c639d518718a89a6dfc251c29031d309'
+            'f02cc9aea7e6622e6081b8e9db6a30e6514a45c3b536c265fa271d2e01fc15eb'
+            '335e235d1c7ec9aaf434e07e5b9e8415077cb4c99088ee43765f58abc2d369dc'
+            '571cbb4039945f1abb736e9b6ca275fc92cb55e68186a1666b2c38172973d596'
+            '7b265b64a346746da295130bbe0f99b618e3673ac88f397418832391cace2d8e'
+            '37d941973cd2ceea651a9d65aaf0f04deb4603f2e9a78f0e1c0ec75b1eadbdee'
+            '4f3aa7563c3160df060a8e9cbdbf1f5e8997e339e0fe4cd6c9c16004a28f1ac8'
+            '27f6a21ae6844e141a176e1669c9acbf2cdebdd1b103818ec5b9de9115581eaf'
+            '49820933574bba0af74ef85c0f2d3124fba5e7c8c34a10bcb795d63ea06dd511'
+            '92cbdfa36586bf8f223962f6f46bea4659808e29c80ba521790edd21e6643db8'
+            '0b6158a8b39b1ad5330d3ea3ca7360aed4f67d1f344c9cf92c4c1e98276d0735'
+            '0b69edd53f0d9e8cb907e6d06323b50b91d30c2f7f66b4935a58bd6848db62f5'
+            'c37d59e7956d0d393847285855167d5a62ada4e83d3b867232653c5b0bd28c27'
+            '012a2bab2e06f1bcdd8089b4f4a3375d2166c015665f3dfdf27bd9a94a9d5679'
+            '2495007afc234b1110db12cf4fda48bbd0e2569d22c1af078e20af692b9ef580'
+            'e6385aadd2349b0f290bb1cf409c724a333ceecc53d153ef798701ddd9bbeed1'
+            '04129856899eedf4b744d0d7c0116759a28ef5d56c72ede4d4ac8e5b47550d9f'
+            'b83eed7a69a0df58c5c064d63778c8b7a54ee1c91c00c6877466737cc9588068'
+            'c1d8a9c8361af00c522e9f6edb410c795f2a984b38d45c71e9a4119a856c1c21'
+            'bd2811cb342774644d9a2af69f3c3bd98f21ac4f530f36cb93b54ab9b9803861'
+            '13f63b62bf8b3e7756eae5ec34f7ac9cc92893f78b76c4d58a621744d6f14748'
+            'e8ae0633652b80fbf59447f60909d068a2c1c3bdee7ac9d165be845c35868599'
+            'fcc9c8e239b587072023ba6bf8d13d07af94a7345281a6472065709681cdbf3a'
+            '669174d05b9bfa8ff76947d981fe0eeb4b552c73e7e050c2380c0b8979cf1d83'
+            'a50220202a4c46e78d7e85f09b31c67ccae205879a42c49a01f5e1ae4cf16ee4'
+            '86009df87cdae1fa4e1c14237ea08fbcb126f71d168c697471286c41e553fa4b'
+            'b04d41408c13b708e767363fe6f4d80495e04b54941ffa8fa71630e55b782af2'
+            'd912af06c04ce754c6d954d7199e1de81406dcc69c8b3eece35d9f1c292f5e70'
+            '3c16dde0a17d5755a10a47a15a24f400296d7765d4cd68ac6fa24fca28d5c158'
+            'eb2e2aa45670afa24b3fc120750b6c110c3c2de88e75849f8b1080ed67716602'
+            '94505847d8d5c58335685c477ec6b49dc53d4d0ceedaa865610f6f43ce1afb4b'
+            '8a72e8d0375f04ee2d77e084d68dec3671e60fb55fff3f53b082061a27f400ba'
+            '6aa5a39edf0c61554068b9009f1739f77302f00acfa2b464b4ca2e1c4fa337b1'
+            '73df2eef1c75bac824d957997a34b7ff60cbf452fb232654b5e99e5fb537055b'
+            '540b2e3b2634f82cea8236a0c7c399f25f0e1ce3a83910a69fb97e63d6611514'
+            'ebbbd0c3cc36a5eaf78c9f1cafa73526bb59d8959863933c904bbeb9da0eaff4'
+            '4558eeb49f836c192e33fa06f5ab2e8d0b95f47ada59e8ef43e74b6bb0b58650'
+            'e595217122c5d1d7c1fe2d2102728704659e3ebf9f9bbad044925741d3c95dd6'
+            '95a1344e4d74defeae8d67e504368ab433aceea7fb645a997f7dba57cd4cffe2'
+            'dc1ed89dad005e37b2e61e73778d784328666709541b18f965dfa2b52dc097d4'
+            'e70848b47705026cd480904c0b00f9eb28edba124f4c1583f835233cef902176'
+            '8bacab4e1dbc0598ce27e0584cad01353117bd3ac60366362ea891066f405bbc'
+            '07d2a70365730acc970ac204a84f7c2cf14602aa0945998a494073d2e92839f3'
+            '0057f3ea6532929b95100669859e6c6a86c247fa8e6306c4aa1df91eb12ed8fa'
+            'c2b47f379380857cd47df25225bbba90268f6aaea75e6b97add802913c1be322'
+            '9f67cd7728c262fdbea23fa91b4c3ae1607b19e2be5dbed6920c63dd4527ae6e'
+            'e1b7bf74abc4b10665eb3ccdd83ab43d050a432e834d870be9faef0fa3fe9152'
+            'd7f66359246e4050bf89a8b1ce0c300ff26aff8d27eb087a893223d5015ff4c8'
+            '1c0ae6468a296c01d5f3ad298bbf9ad1c6e3827b7c60d9e512dd8e7df652ae83'
+            'f76eedd2d0aedf88b2362dfdd41d31c1eef5cebc2cf1f136eaf071545874db9e'
+            'efc4c843f5335d5ed72f87585cd0edfa98107957496380580d5b77792ac5e60a'
+            '773d6276040a1d5625d1e53aaaccf7ecd380e877454f657c8e293e98fb4ad905'
+            '808e9c0dea38ed9939668d96826b142c37746bf83ba75f501cd3e9df526fee5b'
+            'fc5ed844a4a3b0e698c18331532f6686c6e766467b623890c82a7ef71fbbc0e0')
+
+build() {
+  python3 -B -m unittest test_clock test_config test_qca6390 test_usb_internet
+  bash test_boot_attempts.sh
+  bash test_charger.sh
+}
+
+package() {
+  install -Dm644 50-pico4-usb.conf "$pkgdir/etc/NetworkManager/conf.d/50-pico4-usb.conf"
+  install -Dm644 50-pico4-wifi-address.conf "$pkgdir/etc/NetworkManager/conf.d/50-pico4-wifi-address.conf"
+  install -Dm644 50-pico4-wifi-autoconnect.conf "$pkgdir/etc/NetworkManager/conf.d/50-pico4-wifi-autoconnect.conf"
+  install -Dm644 main.conf "$pkgdir/etc/iwd/main.conf"
+  install -Dm644 sshd_config.d-50-pico4.conf "$pkgdir/etc/ssh/sshd_config.d/50-pico4.conf"
+  install -Dm644 50-pico4-console.conf "$pkgdir/etc/sysctl.d/50-pico4-console.conf"
+  install -Dm644 50-pico4-memory.conf "$pkgdir/etc/sysctl.d/50-pico4-memory.conf"
+  install -Dm644 50-pico4-limit.conf "$pkgdir/etc/systemd/coredump.conf.d/50-pico4-limit.conf"
+  install -Dm644 home.mount "$pkgdir/etc/systemd/system/home.mount"
+  install -Dm644 journald.conf.d-50-pico4.conf "$pkgdir/usr/lib/systemd/journald.conf.d/50-pico4.conf"
+  install -Dm644 10-pico4-wlan.link "$pkgdir/usr/lib/systemd/network/10-pico4-wlan.link"
+  install -Dm644 50-pico4-usb.network "$pkgdir/usr/lib/systemd/network/50-pico4-usb.network"
+  install -Dm644 system.conf.d-50-pico4.conf "$pkgdir/usr/lib/systemd/system.conf.d/50-pico4.conf"
+  install -Dm644 emergency.service.d-pico4.conf "$pkgdir/usr/lib/systemd/system/emergency.service.d/pico4.conf"
+  install -Dm644 rescue.service.d-pico4.conf "$pkgdir/usr/lib/systemd/system/rescue.service.d/pico4.conf"
+  install -Dm644 pico4-venus.conf "$pkgdir/usr/lib/systemd/system/steam-video-codec-setup.service.d/pico4-venus.conf"
+  install -Dm644 pico4-boot-ok.service "$pkgdir/usr/lib/systemd/system/pico4-boot-ok.service"
+  install -Dm644 pico4-bt-address.service "$pkgdir/usr/lib/systemd/system/pico4-bt-address.service"
+  install -Dm644 pico4-bt-firmware.service "$pkgdir/usr/lib/systemd/system/pico4-bt-firmware.service"
+  install -Dm644 pico4-charger.service "$pkgdir/usr/lib/systemd/system/pico4-charger.service"
+  install -Dm644 pico4-charger.target "$pkgdir/usr/lib/systemd/system/pico4-charger.target"
+  install -Dm644 pico4-clock.service "$pkgdir/usr/lib/systemd/system/pico4-clock.service"
+  install -Dm644 pico4-panel-probe.service "$pkgdir/usr/lib/systemd/system/pico4-panel-probe.service"
+  install -Dm644 pico4-persist.service "$pkgdir/usr/lib/systemd/system/pico4-persist.service"
+  install -Dm644 pico4-recovery-watch.service "$pkgdir/usr/lib/systemd/system/pico4-recovery-watch.service"
+  install -Dm644 pico4-splash.service "$pkgdir/usr/lib/systemd/system/pico4-splash.service"
+  install -Dm644 pico4-storage-ro.service "$pkgdir/usr/lib/systemd/system/pico4-storage-ro.service"
+  install -Dm644 pico4-usb-gadget.service "$pkgdir/usr/lib/systemd/system/pico4-usb-gadget.service"
+  install -Dm644 pico4-usb-internet.service "$pkgdir/usr/lib/systemd/system/pico4-usb-internet.service"
+  install -Dm644 pico4-venus-probe.service "$pkgdir/usr/lib/systemd/system/pico4-venus-probe.service"
+  install -Dm644 pico4-wlan-address.service "$pkgdir/usr/lib/systemd/system/pico4-wlan-address.service"
+  install -Dm644 pico4-wlan-probe.service "$pkgdir/usr/lib/systemd/system/pico4-wlan-probe.service"
+  install -Dm644 pico4-zram-swap.service "$pkgdir/usr/lib/systemd/system/pico4-zram-swap.service"
+  install -Dm644 pico4-usb-gadget.conf "$pkgdir/usr/lib/tmpfiles.d/pico4-usb-gadget.conf"
+  install -Dm644 00-pico4-devnodes.rules "$pkgdir/usr/lib/udev/rules.d/00-pico4-devnodes.rules"
+  install -Dm755 boot-attempts "$pkgdir/usr/libexec/pico4/boot-attempts"
+  install -Dm755 bt-address "$pkgdir/usr/libexec/pico4/bt-address"
+  install -Dm755 bt-firmware "$pkgdir/usr/libexec/pico4/bt-firmware"
+  install -Dm755 charger "$pkgdir/usr/libexec/pico4/charger"
+  install -Dm755 clock "$pkgdir/usr/libexec/pico4/clock"
+  install -Dm755 devnode "$pkgdir/usr/libexec/pico4/devnode"
+  install -Dm755 fail-to-fastboot "$pkgdir/usr/libexec/pico4/fail-to-fastboot"
+  install -Dm755 persist "$pkgdir/usr/libexec/pico4/persist"
+  install -Dm755 preinit "$pkgdir/usr/libexec/pico4/preinit"
+  install -Dm755 remoteproc-boot "$pkgdir/usr/libexec/pico4/remoteproc-boot"
+  install -Dm755 usb-gadget "$pkgdir/usr/libexec/pico4/usb-gadget"
+  install -Dm755 usb-internet "$pkgdir/usr/libexec/pico4/usb-internet"
+  install -Dm755 venus-probe "$pkgdir/usr/libexec/pico4/venus-probe"
+  install -Dm755 wlan-address "$pkgdir/usr/libexec/pico4/wlan-address"
+  install -Dm755 wlan-probe "$pkgdir/usr/libexec/pico4/wlan-probe"
+  install -Dm755 vrdevice_path "$pkgdir/usr/local/bin/vrdevice_path"
+  install -Dm644 50-pico4-base.preset -t "$pkgdir/usr/lib/systemd/system-preset"
+}

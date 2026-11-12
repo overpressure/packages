@@ -1,0 +1,25 @@
+# Monado OpenXR runtime as a system service (docs/session.md): the compositor on the
+# panels, the head IMU, the tracking cameras for pico4-slamd, the controllers and
+# the lens motor, for clients of any user through pico4-monado.socket. The
+# first client starts it (socket activation); it keeps the hardware until it
+# is stopped. SteamVR's driver_monado opens the same hardware, so the two
+# never run together (docs/session.md).
+[Unit]
+Description=Monado OpenXR runtime (PICO 4)
+Requires=pico4-monado.socket
+After=pico4-monado.socket pico4-sensors.target
+Wants=pico4-sensors.target
+# PICO OS's head tracker (docs/xr.md#head-tracking).
+Wants=pico4-slamd.service
+# PICO OS's CPU limits for VR while it runs (docs/cooling.md#vr-cpu-limits).
+Wants=pico4-vr-performance.service
+After=pico4-vr-performance.service
+ConditionPathExists=/dev/dri/renderD128
+
+[Service]
+ExecStart=/usr/libexec/pico4/monado-service
+Environment=XDG_RUNTIME_DIR=/run/pico4-monado
+Environment=XRT_NO_STDIN=1
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10

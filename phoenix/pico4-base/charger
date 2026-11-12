@@ -1,0 +1,93 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# Charger mode of the installed system (docs/install.md).
+#
+# With the USB cable attached, a powered-off headset starts again: the PMIC powers up on USB and
+# the bootloader boots with androidboot.mode=charger. PICO OS then runs AOSP's charger instead of
+# the system: holding the power key for 2 s starts the system, and 10 s without USB power turn
+# the headset off. The installed system does the same here (pico4-charger.target, which preinit
+# starts instead of the default target): the lenses stay dark, the USB link and SSH come up.
+# Sourced with CHARGER_LIB=1, it only defines its functions (test_charger.sh).
+. "${CHARGER_LIBDIR:-/usr/libexec/pico4}/lib.sh"
+
+POWER_ON_HOLD=2
+UNPLUGGED_OFF=10
+KEY_POWER=116
+EV_KEY=1
+
+# The power key's event device: the PMIC's power-on key.
+power_key_device() {
+	local d name
+	for d in /sys/class/input/event*; do
+		name=$(cat "$d/device/name" 2>/dev/null)
+		[ "$name" = pm8941_pwrkey ] && { echo "/dev/input/${d##*/}"; return 0; }
+	done
+	return 1
+}
+
+# read_key: reads one input event (struct input_event: 16 bytes of time, then type, code and
+# value) from standard input and prints "press" or "release" for the power key, "other" for
+# anything else, nothing at the end of the input.
+read_key() {
+	local event
+	event=$(dd bs=24 count=1 2>/dev/null | od -An -v -tu2)
+	[ -n "$event" ] || return 1
+	# shellcheck disable=SC2086
+	set -- $event
+	if [ "$9" = "$EV_KEY" ] && [ "${10}" = "$KEY_POWER" ]; then
+		case "${11}" in
+		1) echo press; return 0 ;;
+		0) echo release; return 0 ;;
+		esac
+	fi
+	echo other
+}
+
+# The key: each press gets a number; a timer started with it boots the system if that same
+# press is still held POWER_ON_HOLD seconds later.
+watch_key() {
+	local dev press=0 key
+	dev=$(power_key_device) || { log "charger mode: no power key device"; return 1; }
+	exec 3< "$dev"
+	while key=$(read_key <&3); do
+		case "$key" in
+		press)
+			press=$((press + 1))
+			echo "$press" > "$P4_RUN/charger-press"
+			(
+				sleep "$POWER_ON_HOLD"
+				[ "$(cat "$P4_RUN/charger-press" 2>/dev/null)" = "$press" ] || exit 0
+				log "charger mode: power key held ${POWER_ON_HOLD} s, starting the system"
+				sync
+				pico4-reboot
+			) &
+			;;
+		release) echo 0 > "$P4_RUN/charger-press" ;;
+		esac
+	done
+}
+
+# USB power: off after UNPLUGGED_OFF seconds without it.
+# shellcheck disable=SC2120 # the host test passes another file
+watch_power() {
+	local online="${1:-/sys/class/power_supply/usb/online}" without=0
+	while :; do
+		if [ "$(cat "$online" 2>/dev/null)" = 1 ]; then
+			without=0
+		else
+			without=$((without + 1))
+			if [ "$without" -ge "$UNPLUGGED_OFF" ]; then
+				log "charger mode: no USB power for ${UNPLUGGED_OFF} s, powering off"
+				sync
+				pico4-reboot poweroff
+			fi
+		fi
+		sleep 1
+	done
+}
+
+[ -n "${CHARGER_LIB:-}" ] && return 0
+
+log "charger mode (androidboot.mode=charger): hold the power key ${POWER_ON_HOLD} s to start the system"
+watch_power &
+watch_key

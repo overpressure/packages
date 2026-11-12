@@ -1,0 +1,246 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Unlicense
+"""Suspend and resume with sound (docs/hardware-testing.md).
+
+A tone on the speakers, recorded on the microphone, before and after an RTC suspend. The speakers once
+came back silent with their whole path looking healthy, so only the sound itself tells. Run it with
+someone near: a failed resume needs a hand on the headset, and the tones are audible.
+
+SSH over USB drops at the wake, as the link's carrier goes and returns, so start it detached and read its
+result from /run/pico4-suspend-check.json. It also prints that JSON object; exit status 0 only if it passed.
+
+    pico4-suspend-check [--seconds SECONDS]
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import math
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import wave
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+USER = "steamos"
+RATE = 48000
+TONE_HZ = 1000
+#: The tone's level in the file, at the session's saved volume.
+TONE_AMPLITUDE = 0.2
+TONE_SECONDS = 2
+#: The recording starts this long before the tone, which is the room's level.
+LEAD_SECONDS = 1.2
+RECORD_SECONDS = 4.0
+#: The tone has to stand this far above the room at its own frequency.
+MIN_ABOVE_ROOM_DB = 10.0
+#: The second tone may differ from the first by this much.
+MAX_CHANGE_DB = 6.0
+SUSPEND_STATS = "/sys/power/suspend_stats"
+RESULT = "/run/pico4-suspend-check.json"
+
+
+def tone_frames(
+    seconds: float = TONE_SECONDS, rate: int = RATE, hz: float = TONE_HZ, amplitude: float = TONE_AMPLITUDE
+) -> bytes:
+    """Stereo 16-bit samples of the tone."""
+    frames = bytearray()
+    for i in range(int(seconds * rate)):
+        frames += struct.pack("<h", int(amplitude * 32767 * math.sin(2 * math.pi * hz * i / rate))) * 2
+    return bytes(frames)
+
+
+def level_db(samples: Sequence[int], rate: int, start: float, end: float, hz: float = TONE_HZ) -> float:
+    """Return the level of one frequency in a stretch of 16-bit samples (Goertzel), in dBFS."""
+    part = samples[int(start * rate) : int(end * rate)]
+    if not part:
+        return -200.0
+    coefficient = 2 * math.cos(2 * math.pi * hz / rate)
+    p = q = 0.0
+    for sample in part:
+        p, q = sample + coefficient * p - q, p
+    amplitude = math.sqrt(max(p * p + q * q - coefficient * p * q, 1e-9)) / len(part) * 2 / 32768
+    return 20 * math.log10(max(amplitude, 1e-10))
+
+
+def measure(path: str, rate: int = RATE) -> dict:
+    """Return the room's level before the tone and the tone's level, from a recording."""
+    with wave.open(path) as recording:
+        rate = recording.getframerate()
+        count = recording.getnframes()
+        samples = struct.unpack(f"<{count}h", recording.readframes(count))
+    room = level_db(samples, rate, 0.3, LEAD_SECONDS - 0.2)
+    tone = level_db(samples, rate, LEAD_SECONDS + 0.4, LEAD_SECONDS + 1.4)
+    return {"room_db": round(room, 1), "tone_db": round(tone, 1)}
+
+
+def verdict(before: dict, after: dict) -> list[str]:
+    """List what failed: the tone must stand above the room both times, and must not change much."""
+    failures: list[str] = []
+    for name, run in (("before", before), ("after", after)):
+        if run["tone_db"] - run["room_db"] < MIN_ABOVE_ROOM_DB:
+            failures.append(f"no tone on the microphone {name} the suspend")
+    if abs(after["tone_db"] - before["tone_db"]) > MAX_CHANGE_DB:
+        failures.append("the tone changed across the suspend")
+    return failures
+
+
+def pipewire_failure(before: str | None, after: str | None) -> list[str]:
+    """List what failed if PipeWire did not live through the suspend: Steam's interface stays silent then."""
+    return [] if before and before == after else ["PipeWire did not survive the suspend"]
+
+
+def pipewire_pid() -> str | None:
+    """Return the PipeWire daemon's process ID, None when none runs."""
+    found = subprocess.run(
+        ["pgrep", "-x", "pipewire"],  # noqa: S607  # procps' pgrep from the system PATH
+        check=False,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.split()
+    return found[0] if found else None
+
+
+def session_env() -> list[str]:
+    """Return the command prefix that runs a program in the session user's environment."""
+    import pwd  # noqa: PLC0415  # the headset's; the host's tests load this file on any system
+
+    uid = pwd.getpwnam(USER).pw_uid
+    return [
+        "runuser",
+        "-u",
+        USER,
+        "--",
+        "env",
+        f"XDG_RUNTIME_DIR=/run/user/{uid}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+    ]
+
+
+def run_user(*argv: str, timeout: float = 15) -> subprocess.CompletedProcess[str]:
+    """Run a program as the session user, its output as text."""
+    return subprocess.run(  # noqa: S603  # this program's fixed commands, through runuser
+        session_env() + list(argv),
+        timeout=timeout,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+
+def pcm_closed(pcm: str) -> bool:
+    """Tell whether a sound device's stream is closed; one that cannot be read counts as closed."""
+    try:
+        return "closed" in Path(f"/proc/asound/card0/{pcm}/sub0/hw_params").read_text(encoding="utf-8")
+    except OSError:
+        return True
+
+
+def wait_for_idle_pcms(limit: int = 25) -> None:
+    """Wait until other sound ends first: a tone over another stream would measure the mix."""
+    for _ in range(limit):
+        states = [pcm_closed(pcm) for pcm in ("pcm0p", "pcm1c")]
+        if all(states):
+            return
+        time.sleep(1)
+
+
+def tone_round(directory: Path, name: str) -> dict:
+    """Play the tone while recording it and return the levels."""
+    tone = str(directory / "tone.wav")
+    record = str(directory / f"{name}.wav")
+    wait_for_idle_pcms()
+    recorder = subprocess.Popen(  # noqa: S603  # pw-record through runuser, the argv built here
+        [
+            *session_env(),
+            "timeout",
+            str(RECORD_SECONDS),
+            "pw-record",
+            "--rate",
+            str(RATE),
+            "--channels",
+            "1",
+            "--format",
+            "s16",
+            record,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(LEAD_SECONDS)
+    run_user("timeout", str(TONE_SECONDS + 1), "pw-play", tone)
+    recorder.wait(timeout=RECORD_SECONDS + 5)
+    return measure(record)
+
+
+def suspend_stats() -> dict[str, int]:
+    """Return the kernel's counts of successful and failed suspends."""
+    return {name: int((Path(SUSPEND_STATS) / name).read_text(encoding="utf-8")) for name in ("success", "fail")}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the two tone rounds around a suspend and write the result."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--seconds", type=int, default=20, help="time asleep")
+    args = parser.parse_args(argv)
+    result: dict[str, Any] = {"status": "failed"}
+    micmute_stopped = False
+    with tempfile.TemporaryDirectory(prefix="pico4-suspend-check-", dir="/run") as name:
+        directory = Path(name)
+        directory.chmod(0o777)  # the session user's pw-record writes its recordings here
+        tone_path = directory / "tone.wav"
+        with wave.open(str(tone_path), "wb") as tone:
+            tone.setnchannels(2)
+            tone.setsampwidth(2)
+            tone.setframerate(RATE)
+            tone.writeframes(tone_frames())
+        tone_path.chmod(0o644)
+        try:
+            # The session keeps the microphone muted; the check needs it for its two rounds.
+            run_user("systemctl", "--user", "stop", "pico4-micmute")
+            micmute_stopped = True
+            run_user("wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "0")
+            result["before"] = tone_round(directory, "before")
+            stats = suspend_stats()
+            pipewire = pipewire_pid()
+            subprocess.run(  # noqa: S603  # a fixed argv, the time from the parsed integer
+                ["rtcwake", "-m", "freeze", "-s", str(args.seconds)],  # noqa: S607  # util-linux's rtcwake from PATH
+                timeout=args.seconds + 60,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            after_stats = suspend_stats()
+            result["suspended"] = (
+                after_stats["success"] == stats["success"] + 1 and after_stats["fail"] == stats["fail"]
+            )
+            time.sleep(3)
+            result["after"] = tone_round(directory, "after")
+            failures = verdict(result["before"], result["after"]) + pipewire_failure(pipewire, pipewire_pid())
+            if not result["suspended"]:
+                failures.append("the kernel did not count a successful suspend")
+            result["failures"] = failures
+            result["status"] = "passed" if not failures else "failed"
+        except (OSError, subprocess.SubprocessError, ValueError, wave.Error, struct.error) as exc:
+            result["error"] = str(exc)
+        finally:
+            run_user("wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "1")
+            if micmute_stopped:
+                run_user("systemctl", "--user", "start", "pico4-micmute")
+    with Path(RESULT).open("w", encoding="utf-8") as f:
+        json.dump(result, f)
+    with contextlib.suppress(BrokenPipeError):
+        print(json.dumps(result), flush=True)
+    return 0 if result["status"] == "passed" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

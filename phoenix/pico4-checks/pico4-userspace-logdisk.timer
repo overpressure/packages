@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the PICO 4 log drive
+# Also during a stuck boot: timers do not wait for multi-user.target.
+DefaultDependencies=no
+
+[Timer]
+OnActiveSec=45s
+OnUnitActiveSec=2min
+AccuracySec=5s
+
+[Install]
+WantedBy=sysinit.target

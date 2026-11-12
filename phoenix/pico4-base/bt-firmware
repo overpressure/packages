@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# The QCA6390's Bluetooth controller, set up again with its firmware: the image carries PICO OS's
+# firmware and NV data (qca/htbtfw20.tlv, qca/htnv20.bin from PICO's public package), but hci_qca is
+# built in and sets the controller up about 30 ms after the kernel starts, before the root file
+# system is mounted. That setup fails without the files, and the kernel offers a controller to the
+# management interface (btmgmt, bluetoothd) only after a setup that succeeded. Probing it again
+# downloads the firmware now.
+set -eu
+for f in htbtfw20.tlv htnv20.bin; do
+	[ -s "/usr/lib/firmware/qca/$f" ] || { echo "bt-firmware: no qca/$f in the image" >&2; exit 1; }
+done
+for hci in /sys/class/bluetooth/hci*; do
+	[ -e "$hci/device/driver" ] || continue
+	driver=$(readlink -f "$hci/device/driver")
+	name=$(basename "$(readlink -f "$hci/device")")
+	echo "$name" > "$driver/unbind"
+	echo "$name" > "$driver/bind"
+	echo "bt-firmware: ${hci##*/} ($name) probed again"
+done

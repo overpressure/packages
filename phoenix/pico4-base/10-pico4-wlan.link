@@ -1,0 +1,8 @@
+# ath11k's interface keeps the kernel's name wlan0, which pico4-wlan-address and NetworkManager
+# expect; udev's predictable name would be wlp1s0.
+[Match]
+OriginalName=wlan0
+
+[Link]
+NamePolicy=
+MACAddressPolicy=none

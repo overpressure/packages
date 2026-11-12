@@ -1,0 +1,69 @@
+# The PICO 4's sound as on PICO OS: the audio DSP and its audio process's file server, the LPASS macros,
+# the sound card's UCM routes, PipeWire's and WirePlumber's settings for it, the calibration tool
+# (pico4-audiocal; the image's build exports PICO OS's calibration with it) and the microphone muted while
+# the headset is off the head. The preset enables the audio target; the tests run in the build.
+pkgname=pico4-audio
+pkgver=1
+pkgrel=1
+pkgdesc="PICO 4 audio: the ADSP, its audio process, the sound card's routes and calibration, the microphone mute"
+arch=(any)
+url="https://github.com/overpressure/overpressure/tree/main/devices/phoenix/docs"
+license=(Unlicense)
+depends=(bash python systemd)
+backup=(etc/pipewire/pipewire.conf.d/51-pico4-quantum.conf
+        etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf)
+source=(51-pico4-quantum.conf
+        51-pico4-sound-card.conf
+        pico4-audiocal
+        pico4-adsp.service
+        pico4-audio.target
+        pico4-audiopd.service
+        pico4-lpass-macros.service
+        pico4-micmute.service
+        51-pico4-micmute.conf
+        audiopd
+        lpass-macros
+        micmute
+        PICO4-HiFi.conf
+        PICO4.conf
+        50-pico4-audio.preset
+        test_audiocal.py test_micmute.py)
+sha256sums=('5789e02ea04b1a1100faabd0805891703a8916d00be1ff90f428c16db831308f'
+            'f1e3ca483f05861a826224860af29c377c099d85ed063cd942b9f868a771a5e9'
+            '142c91c82c0c2ccbccd567e2c27e29514ae01451be5f648f464d7683f00c1a94'
+            '445f5de9651e38e6cc130d90fa55701f6371a89d542b80933d49197dc7824b12'
+            '7d0be6b99955351a499e595e33542a48bc19f22c73253df42de3881a0986c88d'
+            '6cce0452029f0a97d04b3f9e4a7027514dd7b21ced5df6d8fcb784cbf3780f29'
+            'cfa7f18b06308ac57b238eb9b1bb2727cb1b9b69cc062c26d0d06b5639e60005'
+            '83476604f0c904084a31c48a3cc33ed142e6c863b15840702c73df09aadca9ef'
+            'be43bd33a1894ca7ebbcf7df93b192a257bea6a0c0796a910e6c18fed9d00981'
+            '80ee8760cc9717a267a2d1cdd4e7095461eec34ca775c4451a8b3d49ee6b45bb'
+            '71d5ff6114b99b9f2373681070463a3cb6b1af7fefd7902b3cdca7db3aee4cd9'
+            'b82c97f8f1db6f17424613b57ccf36b235a03baec2c07ff2f467376cf70dcae9'
+            '6e73ec6b6f791a857336992b81c95eaafdc8b221f64eb3f8e090c6bd2bb39c3f'
+            'e6cce0d239fc1389d007aecb5a00d121076deb72963a79149edf05a009c9c38f'
+            '939fd8440eaede54fdbd64642493befc72d6d64cd500834912f2a56aec116b2f'
+            '4c3c9ad66225e3167338ec20b6a2a0a1e22462e6f39651abc45c83ed40678330'
+            '179f021b124a78032d57233419710aafd98bbc313e36a2e57599c51be0f05766')
+
+build() {
+  python3 -B -m unittest test_audiocal test_micmute
+}
+
+package() {
+  install -Dm644 51-pico4-quantum.conf "$pkgdir/etc/pipewire/pipewire.conf.d/51-pico4-quantum.conf"
+  install -Dm644 51-pico4-sound-card.conf "$pkgdir/etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf"
+  install -Dm755 pico4-audiocal "$pkgdir/usr/bin/pico4-audiocal"
+  install -Dm644 pico4-adsp.service "$pkgdir/usr/lib/systemd/system/pico4-adsp.service"
+  install -Dm644 pico4-audio.target "$pkgdir/usr/lib/systemd/system/pico4-audio.target"
+  install -Dm644 pico4-audiopd.service "$pkgdir/usr/lib/systemd/system/pico4-audiopd.service"
+  install -Dm644 pico4-lpass-macros.service "$pkgdir/usr/lib/systemd/system/pico4-lpass-macros.service"
+  install -Dm644 pico4-micmute.service "$pkgdir/usr/lib/systemd/user/pico4-micmute.service"
+  install -Dm644 51-pico4-micmute.conf "$pkgdir/usr/lib/systemd/user/steamvr.service.d/51-pico4-micmute.conf"
+  install -Dm755 audiopd "$pkgdir/usr/libexec/pico4/audiopd"
+  install -Dm755 lpass-macros "$pkgdir/usr/libexec/pico4/lpass-macros"
+  install -Dm755 micmute "$pkgdir/usr/libexec/pico4/micmute"
+  install -Dm644 PICO4-HiFi.conf "$pkgdir/usr/share/alsa/ucm2/conf.d/sm8250/PICO4-HiFi.conf"
+  install -Dm644 PICO4.conf "$pkgdir/usr/share/alsa/ucm2/conf.d/sm8250/PICO4.conf"
+  install -Dm644 50-pico4-audio.preset -t "$pkgdir/usr/lib/systemd/system-preset"
+}

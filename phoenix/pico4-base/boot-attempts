@@ -1,0 +1,43 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# The count of boots that started systemd but never reached the graphical target (a panic, a hang
+# the watchdog ended), on the data partition (docs/install.md, "Boot attempts"):
+#
+#   boot-attempts start      preinit, before systemd: one more unfinished boot. Exits 3, with the
+#                            count reset, when the last ones (PICO4_MAX_UNFINISHED_BOOTS, 2) were
+#                            unfinished: preinit then reboots into the maintenance stage 1, and a
+#                            boot from there has the same tries again.
+#   boot-attempts finished   pico4-boot-ok.service, at the graphical target: the count starts again
+#   boot-attempts            the count
+set -euo pipefail
+
+file=${PICO4_BOOT_ATTEMPTS:-/data/.pico4-boot-attempts}
+max=${PICO4_MAX_UNFINISHED_BOOTS:-2}
+
+count=0
+if [ -f "$file" ]; then
+	read -r count < "$file" || true
+	case "$count" in '' | *[!0-9]*) count=0 ;; esac
+fi
+
+case "${1:-}" in
+start)
+	if [ "$count" -ge "$max" ]; then
+		rm -f "$file"
+		sync "${file%/*}" 2>/dev/null || : # the count is advisory
+		echo "the last $count boots did not reach the graphical target"
+		exit 3
+	fi
+	echo $((count + 1)) > "$file"
+	sync "$file" 2>/dev/null || :
+	[ "$count" = 0 ] || echo "boot $((count + 1)) since the last one that reached the graphical target"
+	;;
+finished)
+	if [ -f "$file" ]; then
+		rm -f "$file"
+		sync "${file%/*}" 2>/dev/null || : # the count is advisory
+	fi
+	;;
+'') echo "$count" ;;
+*) echo "usage: boot-attempts [start|finished]" >&2; exit 2 ;;
+esac

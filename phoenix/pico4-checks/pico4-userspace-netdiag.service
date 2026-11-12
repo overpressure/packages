@@ -1,0 +1,12 @@
+[Unit]
+Description=PICO 4 USB link samples after boot (into pstore)
+DefaultDependencies=no
+# usb-gadget writes the link's interface into /run/pico4/usb-link.env, which this reads once.
+After=systemd-journald.service pico4-usb-gadget.service
+
+[Service]
+Type=exec
+ExecStart=/usr/libexec/pico4/userspace-netdiag
+
+[Install]
+WantedBy=sysinit.target

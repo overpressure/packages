@@ -1,0 +1,20 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# Probe the video codec (Venus) once its firmware is there. The driver probes
+# it while the kernel starts, before the system's /usr/lib/firmware holds PICO's venus.mdt, and that
+# probe fails for good. The bind returns the probe's result (docs/session.md#steam-link).
+. /usr/libexec/pico4/lib.sh
+set -u
+DEV=aa00000.video-codec
+
+if [ -e "/sys/bus/platform/devices/$DEV/driver" ]; then
+	log "venus: bound"
+	exit 0
+fi
+if echo "$DEV" > /sys/bus/platform/drivers/qcom-venus/bind 2> /dev/null; then
+	log "venus: bound with $(cat "/sys/bus/platform/devices/$DEV/of_node/firmware-name" 2>/dev/null | tr -d '\0')"
+	exit 0
+fi
+log "venus: probe failed"
+dmesg | grep -i venus | tail -n 5 | while IFS= read -r line; do log "venus: $line"; done
+exit 1

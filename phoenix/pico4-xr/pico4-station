@@ -1,0 +1,639 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
+"""Control the PICO 4 controller radio ("station", an nRF52832 on SPI) for the Linux userspace.
+
+The station relays the controllers' IMU, buttons and battery to the sensor DSP
+(SSC sensor "ble_mcu", see pico4-imu raw ble_mcu); the AP talks to it over
+/dev/spidev0.0 for control only. Frames are 40 bytes: header, target, command,
+36 payload bytes (the last two carry a sequence number), CRC-8 (Dallas/Maxim)
+over bytes 0..38.
+
+Safety: the station and controller firmware can be updated over this link. This
+tool can only build the frames listed in COMMANDS (version query, camera frame
+sync, IMU stream on/off, the controllers' slow advertising, acknowledge), the controller pairing
+commands (enter pairing, stop pairing, unbond, each with one controller's mask and nothing else),
+the controller motor, the two read-only controller queries PICO OS sends on every connect (info,
+calibration) and the station-power switch; it has no way to send firmware, bootloader or flash
+commands, and it never touches the boot pin.
+
+While a session runs, its driver owns the station: pair, unpair and status then go to the driver's
+pairing socket (pico4_station.h), which sends the same pairing commands.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import fcntl
+import json
+import os
+import socket
+import struct
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+DEVICE = "/dev/spidev0.0"
+FRAME = 40
+HEADER_SEND = 0xAA
+#: What the station sends: replies (BB, target, command) and its own frames (A5, kind).
+HEADER_REPLY, HEADER_STATION = 0xBB, 0xA5
+HEADERS_RECV = (HEADER_REPLY, HEADER_STATION)
+#: The station's own frame after power-on: A5 06, protocol and radio type.
+STATION_ANNOUNCE = 0x06
+#: Payload bytes a request can carry: 36, of which the last two hold the sequence number.
+PAYLOAD_MAX = 34
+TARGET_STATION = 0x01
+# A plain spidev, and the station's supply as station-power (device tree).
+STATION_POWER = "/sys/devices/platform/station-power/state"
+SPI_IOC_MESSAGE_1 = 0x40206B00  # _IOW('k', 0, struct spi_ioc_transfer)
+SPIDEV_POLL_S = 0.002
+
+# The only commands this tool builds.
+CMD_VERSION = 0x01
+CMD_CAMERA = 0x04  # tracking-camera frame sync; first payload byte selects the operation
+CMD_IMU_STREAM = 0x07
+CMD_ACK = 0xFA
+# Read-only queries the stock service sends after waking the station.
+CMD_GET_WORK_MODE, CMD_GET_CRASH, CMD_GET_WHITELIST = 0x22, 0x29, 0x30
+QUERIES = (CMD_GET_WORK_MODE, CMD_GET_CRASH, CMD_GET_WHITELIST)
+# 0x22 with a first byte of 0 *sets* the tracker work mode; 1 reads it.
+QUERY_PAYLOAD = {CMD_GET_WORK_MODE: bytes([1, 0])}
+# The station announces itself after power-on (A5 06: protocol, radio type) and
+# waits for the camera frame-rate setting before it accepts camera commands.
+CMD_STATION_FPS = 0x19
+STATION_FPS_50 = 1  # the stock configuration (sys_station_camera_fps 50)
+STATION_FPS_LEN = 3  # rate setting, device type, 1
+DEVICE_TYPE = 0  # DeviceTypeGet() on the PICO 4
+# The controllers advertise slowly, so that they stay reachable while the station's power is off
+# (the stock service's goToSleep). Payload 00 00; other first bytes are trackers.
+CMD_SLOW_ADV = 0x0D
+SLOW_ADV_CONTROLLERS = bytes([0, 0])
+# Controller pairing, as the stock service's EnterPairing, StopPairing and UnbondController send
+# it: one byte, the controller mask (1 left, 2 right; the stock tracker pairing uses the higher bits,
+# and USB pairing sends 03 with a radio address, neither of which this tool builds). The station
+# answers BB 01 <command> with byte 4 1 for done; a controller paired while the station listens
+# connects with A5 02, and one unpaired from its own buttons is reported as A5 05, hand in byte 2.
+CMD_ENTER_PAIRING, CMD_UNBOND, CMD_STOP_PAIRING = 0x02, 0x03, 0x08
+PAIRING_COMMANDS = (CMD_ENTER_PAIRING, CMD_UNBOND, CMD_STOP_PAIRING)
+HAND_MASK = {"left": 0x01, "right": 0x02}
+#: The station's own frames: a controller connected (bytes as the info reply) or unpaired.
+STATION_CONNECT, STATION_UNBOND = 0x02, 0x05
+PAIRING_ACK_S = 0.5  # the stock service waits the caller's time, at least 20 ms (its test tool: 100 ms)
+UNBOND_ACK_S = 0.5  # at least 300 ms in the stock service
+#: The driver's pairing socket in the session user's runtime directory (pico4_station.h).
+CONTROL_NAME = "pico4-station"
+SESSION_USER = "steamos"
+#: Seconds past a pairing's own time the driver gets to answer, and an unpair's or a status's wait.
+CONTROL_SLACK_S, CONTROL_ANSWER_S = 5.0, 3.0
+COMMANDS = (
+    CMD_VERSION,
+    CMD_CAMERA,
+    CMD_IMU_STREAM,
+    CMD_ACK,
+    CMD_STATION_FPS,
+    CMD_SLOW_ADV,
+    *QUERIES,
+    *PAIRING_COMMANDS,
+)
+CAMERA_INIT, CAMERA_STREAM, CAMERA_SET_PARA, CAMERA_FPS = 0x01, 0x02, 0x03, 0x07
+CAMERA_OPS = (CAMERA_INIT, CAMERA_STREAM, CAMERA_SET_PARA, CAMERA_FPS)
+# Set parameters (the stock CameraSetPara): op, 8 x (u16 exposure, u8 gain) with
+# cameras 0-3 in bytes 1-12 and 16-27, a u16 at 13-14 and an event index at 15.
+CAMERA_SET_PARA_LEN = 28
+# The one controller command: the motor (stationservice SetMotor 0x71eb4), to target 2 (left)
+# or 3 (right): play, amplitude, u16 duration in ms. Level 0 sends the all-zero stop.
+TARGET_CONTROLLER = {"left": 0x02, "right": 0x03}
+CMD_MOTOR = 0x01
+MOTOR_SCALE_PERCENT = 75  # PICO OS's default ctrl_motor_vibration_amplitude (0x72000)
+LEVEL_MAX, DURATION_MAX_MS = 0xFF, 0xFFFF  # the motor's u8 level and u16 duration
+# Read-only controller queries, as PICO OS's station service sends them on every connect.
+# Info (UpdateControllerConnectStatus 0x6a438): no payload; the reply carries the status
+# (byte 9), software (3-8), hardware (10-11), serial (13-29) and radio address (30-35).
+# Calibration (CalibrationData::GetCalibrationFromStation 0x9eeb4): one byte, the chunk
+# index 1-12; the reply echoes it in byte 3 (0xFF not ready, 0xEE error) with 32 bytes of
+# the record in bytes 4-35.
+CMD_CONTROLLER_CALIBRATION = 0x02
+CMD_CONTROLLER_INFO = 0x03
+CALIBRATION_CHUNKS = 12  # the 20-LED layout: 3 IMU, 8 LED, 1 imu_IR
+CALIBRATION_NOT_READY, CALIBRATION_ERROR = 0xFF, 0xEE
+CALIBRATION_TRIES = 30
+
+
+def _crc8_table() -> list[int]:
+    table = []
+    for i in range(256):
+        c = i
+        for _ in range(8):
+            c = (c >> 1) ^ 0x8C if c & 1 else c >> 1
+        table.append(c)
+    return table
+
+
+CRC8 = _crc8_table()
+
+
+def crc8(data: bytes) -> int:
+    """Return the frames' CRC-8 (Dallas/Maxim)."""
+    c = 0
+    for b in data:
+        c = CRC8[c ^ b]
+    return c
+
+
+def frame(command: int, payload: bytes = b"", seq: int | None = None) -> bytes:
+    """Build a 40-byte request; only the allowlisted commands can be built."""
+    allowed = command in COMMANDS
+    if command == CMD_CAMERA:
+        allowed = bool(payload) and payload[0] in CAMERA_OPS
+        if allowed and payload[0] == CAMERA_SET_PARA:
+            allowed = len(payload) == CAMERA_SET_PARA_LEN
+    elif command == CMD_SLOW_ADV:
+        allowed = payload == SLOW_ADV_CONTROLLERS
+    elif command in QUERY_PAYLOAD:
+        allowed = payload == QUERY_PAYLOAD[command]
+    elif command == CMD_STATION_FPS:
+        allowed = len(payload) == STATION_FPS_LEN and payload[0] in (1, 2) and payload[2] == 1
+    elif command in PAIRING_COMMANDS:
+        allowed = len(payload) == 1 and payload[0] in HAND_MASK.values()
+    if not allowed:
+        msg = f"command {command:#x} {payload[:1].hex()} is not allowed"
+        raise ValueError(msg)
+    if len(payload) > PAYLOAD_MAX:
+        msg = "payload too long"
+        raise ValueError(msg)
+    buf = bytearray(FRAME)
+    buf[0], buf[1], buf[2] = HEADER_SEND, TARGET_STATION, command
+    buf[3 : 3 + len(payload)] = payload
+    if seq is not None:
+        struct.pack_into("<H", buf, 37, seq & 0xFFFF)
+    buf[39] = crc8(bytes(buf[:39]))
+    return bytes(buf)
+
+
+def motor_frame(hand: str, level: int, duration_ms: int) -> bytes:
+    """Build a vibration request for one controller (as pico4_station_vibrate())."""
+    if hand not in TARGET_CONTROLLER or not 0 <= level <= LEVEL_MAX or not 0 <= duration_ms <= DURATION_MAX_MS:
+        msg = "hand left|right, level 0-255, duration 0-65535 ms"
+        raise ValueError(msg)
+    payload = bytes(4)
+    if level:
+        payload = struct.pack("<BBH", 1, min(level * MOTOR_SCALE_PERCENT // 100, 255), duration_ms)
+    buf = bytearray(FRAME)
+    buf[0], buf[1], buf[2] = HEADER_SEND, TARGET_CONTROLLER[hand], CMD_MOTOR
+    buf[3:7] = payload
+    buf[39] = crc8(bytes(buf[:39]))
+    return bytes(buf)
+
+
+def controller_query_frame(hand: str, command: int, payload: bytes = b"") -> bytes:
+    """Build one of the two read-only controller queries, with exactly the payload PICO OS sends."""
+    allowed = hand in TARGET_CONTROLLER and (
+        (command == CMD_CONTROLLER_INFO and payload == b"")
+        or (command == CMD_CONTROLLER_CALIBRATION and len(payload) == 1 and 1 <= payload[0] <= CALIBRATION_CHUNKS)
+    )
+    if not allowed:
+        msg = f"controller command {command:#x} {payload.hex()} is not allowed"
+        raise ValueError(msg)
+    buf = bytearray(FRAME)
+    buf[0], buf[1], buf[2] = HEADER_SEND, TARGET_CONTROLLER[hand], command
+    buf[3 : 3 + len(payload)] = payload
+    buf[39] = crc8(bytes(buf[:39]))
+    return bytes(buf)
+
+
+def parse_controller_info(buf: bytes) -> dict:
+    """Return the fields of an info reply (BB, target, 03), as the station service reads them."""
+    return {
+        "status": buf[9] & 0x0F,  # 1 connected, 2 connected but invalid
+        "connect_type": buf[9] >> 4,
+        "software": buf[3:9].split(b"\0")[0].decode("ascii", "replace"),
+        "hardware": buf[10:12].hex(),
+        "serial": buf[13:30].split(b"\0")[0].decode("ascii", "replace"),
+        "address": buf[30:36].hex(":"),  # in frame order
+    }
+
+
+def calibration_floats(chunks: dict[int, bytes]) -> dict:
+    """Return the record's blocks from chunks 1-12 (32 bytes each), as little-endian floats."""
+
+    def floats(data: bytes) -> list[float]:
+        return list(struct.unpack(f"<{len(data) // 4}f", data))
+
+    imu = b"".join(chunks[i] for i in (1, 2, 3))
+    leds = b"".join(chunks[i] for i in range(4, CALIBRATION_CHUNKS))
+    return {"imu": floats(imu), "leds": floats(leds), "imu_ir": floats(chunks[CALIBRATION_CHUNKS])}
+
+
+def valid_reply(buf: bytes) -> bool:
+    """Tell whether a frame is a whole one from the station, its CRC included."""
+    return len(buf) == FRAME and buf[0] in HEADERS_RECV and crc8(buf[:39]) == buf[39]
+
+
+class StationBusyError(OSError):
+    """A running session's driver owns the station."""
+
+
+class Station:
+    """The station on its spidev, owned by this process under the driver's lock."""
+
+    def __init__(self, device: str = DEVICE) -> None:
+        """Open and lock the device; a running session that owns the station makes this fail."""
+        self.fd = os.open(device, os.O_RDWR)
+        # The same lock as the driver's (pico4_station.c): one owner of the station at a time.
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(self.fd)
+            msg = f"{device} is in use (a running Monado or SteamVR session owns the station)"
+            raise StationBusyError(msg) from None
+        self.seq = 0
+        self.log: list[dict] = []
+        self.announced = False
+        # A plain spidev moves no frames on its own: each transfer is full duplex, and the
+        # station's next frame comes back with whatever goes out, a command or zeros (no
+        # header, which the station ignores). Frames that come back wait in the queue.
+        self.queue: list[bytes] = []
+        # The station repeats its last frame on every transfer until it has another one: a frame
+        # equal to the last is no new one.
+        self.last: bytes | None = None
+        self._tx = ctypes.create_string_buffer(FRAME)
+        self._rx = ctypes.create_string_buffer(FRAME)
+
+    def close(self) -> None:
+        """Close the device, which frees the lock."""
+        os.close(self.fd)
+
+    def power(self, *, on: bool) -> None:
+        """Switch the station's supply; what it sent before is gone with it."""
+        Path(STATION_POWER).write_text("enabled" if on else "disabled")
+        self.queue.clear()
+        self.last = None
+
+    def _transfer(self, data: bytes) -> None:
+        self._tx.raw = data
+        ctypes.memset(self._rx, 0, FRAME)
+        xfer = struct.pack(
+            "<QQIIHBBBBBB", ctypes.addressof(self._tx), ctypes.addressof(self._rx), FRAME, 0, 0, 0, 0, 0, 0, 0, 0
+        )
+        fcntl.ioctl(self.fd, SPI_IOC_MESSAGE_1, xfer)
+        if valid_reply(self._rx.raw) and self._rx.raw != self.last:
+            self.last = self._rx.raw
+            self.queue.append(self._rx.raw)
+
+    def send(self, data: bytes) -> None:
+        """Send one frame; what comes back with it waits in the queue."""
+        self._transfer(data)
+
+    def _next(self, timeout: float) -> bytes | None:
+        """Return the station's next frame within the timeout, or None."""
+        end = time.monotonic() + timeout
+        while not self.queue:
+            self._transfer(bytes(FRAME))
+            if self.queue or time.monotonic() >= end:
+                break
+            time.sleep(SPIDEV_POLL_S)
+        return self.queue.pop(0) if self.queue else None
+
+    def read(self, timeout: float) -> bytes | None:
+        """Return one valid frame or None; acknowledges replies as the stock service does."""
+        buf = self._next(timeout)
+        if buf is None:
+            return None
+        entry = {"t": round(time.monotonic(), 4), "hex": buf.hex()}
+        self.log.append(entry)
+        if not valid_reply(buf):
+            entry["valid"] = False
+            return None
+        if not (buf[0] == HEADER_STATION and buf[1] == 0x01):
+            self.send(frame(CMD_ACK, buf[37:39]))
+        if buf[0] == HEADER_STATION and buf[1] == STATION_ANNOUNCE and not self.announced:
+            # As the stock service: answer the announcement with the camera frame rate.
+            self.announced = True
+            self.send(frame(CMD_STATION_FPS, bytes([STATION_FPS_50, DEVICE_TYPE, 1])))
+            entry["answered"] = "station fps"
+        return buf
+
+    def collect(self, seconds: float) -> list[bytes]:
+        """Return the frames the station sends within this time, acknowledged."""
+        end = time.monotonic() + seconds
+        frames: list[bytes] = []
+        while time.monotonic() < end:
+            buf = self.read(min(0.2, max(0.0, end - time.monotonic())))
+            if buf is not None:
+                frames.append(buf)
+        return frames
+
+    def request(self, command: int, payload: bytes = b"", seconds: float = 1.0) -> list[bytes]:
+        """Send a station command and return the frames that follow within this time."""
+        # As the stock service: only the version query carries a sequence number.
+        seq = None
+        if command == CMD_VERSION:
+            self.seq += 1
+            seq = self.seq
+        self.send(frame(command, payload, seq))
+        return self.collect(seconds)
+
+    def controllers_slow_adv(self) -> bool:
+        """As the stock service before the power goes: two tries of 100 ms, byte 4 of the reply 1."""
+        for _ in range(2):
+            for reply in self.request(CMD_SLOW_ADV, SLOW_ADV_CONTROLLERS, 0.1):
+                if reply[0] == HEADER_REPLY and reply[2] == CMD_SLOW_ADV:
+                    return reply[4] == 1
+        return False
+
+    def drain(self) -> None:
+        """Read (and acknowledge) what is already queued, so late replies cannot be taken for new ones."""
+        while self.read(0.0) is not None:
+            pass
+
+    def controller_reply(
+        self, hand: str, command: int, payload: bytes, seconds: float, index: int | None = None
+    ) -> bytes | None:
+        """Send a controller query and return its reply (BB, target, command), or None.
+
+        Calibration replies for another chunk (late answers to an earlier request) are skipped.
+        """
+        self.drain()
+        self.send(controller_query_frame(hand, command, payload))
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            buf = self.read(max(0.0, end - time.monotonic()))
+            if buf is None or buf[0] != HEADER_REPLY or buf[1] != TARGET_CONTROLLER[hand] or buf[2] != command:
+                continue
+            if index is not None and buf[3] not in (index, CALIBRATION_NOT_READY, CALIBRATION_ERROR):
+                continue
+            return buf
+        return None
+
+    def controller_info(self, hand: str) -> dict | None:
+        """Return a controller's status, versions, serial and radio address; None without a reply."""
+        buf = self.controller_reply(hand, CMD_CONTROLLER_INFO, b"", 0.5)
+        return None if buf is None else parse_controller_info(buf)
+
+    def controller_calibration(self, hand: str) -> dict[int, bytes]:
+        """Chunks 1-12 as the station service fetches them: retry a chunk that is not ready."""
+        chunks: dict[int, bytes] = {}
+        for index in range(1, CALIBRATION_CHUNKS + 1):
+            for _ in range(CALIBRATION_TRIES):
+                buf = self.controller_reply(hand, CMD_CONTROLLER_CALIBRATION, bytes([index]), 0.1, index)
+                if buf is None:
+                    continue
+                if buf[3] == CALIBRATION_ERROR:
+                    msg = f"controller {hand}: calibration error at chunk {index}"
+                    raise OSError(msg)
+                if buf[3] == CALIBRATION_NOT_READY:
+                    time.sleep(0.05)
+                    continue
+                chunks[index] = bytes(buf[4:36])
+                break
+            else:
+                msg = f"controller {hand}: no calibration chunk {index}"
+                raise OSError(msg)
+        return chunks
+
+    def station_result(self, command: int, payload: bytes, seconds: float) -> bool | None:
+        """Send a pairing command; return the station's answer (byte 4 1: done), None without one."""
+        self.drain()
+        self.send(frame(command, payload))
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            buf = self.read(max(0.0, end - time.monotonic()))
+            if buf is not None and buf[0] == HEADER_REPLY and buf[1] == TARGET_STATION and buf[2] == command:
+                return buf[4] == 1
+        return None
+
+    def pair(self, hand: str, seconds: float) -> dict[str, Any]:
+        """Let one controller pair, as the stock EnterPairing: wait for it to connect, then stop pairing.
+
+        The owner holds the controller's Trigger and Home for 6 s meanwhile (PICO OS's instruction).
+        """
+        mask = bytes([HAND_MASK[hand]])
+        out: dict[str, Any] = {"hand": hand, "connected": None}
+        out["entered"] = self.station_result(CMD_ENTER_PAIRING, mask, PAIRING_ACK_S)
+        if not out["entered"]:
+            return out
+        try:
+            end = time.monotonic() + seconds
+            while time.monotonic() < end and out["connected"] is None:
+                buf = self.read(min(0.2, max(0.0, end - time.monotonic())))
+                if buf is not None and connect_frame(buf, hand):
+                    out["connected"] = parse_controller_info(buf)
+        finally:
+            # Also after a connect: the station must not stay open to other controllers.
+            out["stopped"] = self.station_result(CMD_STOP_PAIRING, mask, PAIRING_ACK_S)
+        return out
+
+    def unpair(self, hand: str) -> bool | None:
+        """Forget one controller, as the stock UnbondController; it pairs again only with pair."""
+        return self.station_result(CMD_UNBOND, bytes([HAND_MASK[hand]]), UNBOND_ACK_S)
+
+
+def connect_frame(buf: bytes, hand: str) -> bool:
+    """Tell whether a frame is the station's report that this controller connected and is valid."""
+    return (
+        buf[0] == HEADER_STATION
+        and buf[1] == STATION_CONNECT
+        and buf[2] == HAND_MASK[hand]
+        and parse_controller_info(buf)["status"] == 1
+    )
+
+
+def control_path() -> str:
+    """Return the driver's pairing socket: PICO4_STATION_SOCKET, else in the session user's runtime directory."""
+    chosen = os.environ.get("PICO4_STATION_SOCKET")
+    if chosen:
+        return chosen
+    if os.getuid() == 0:
+        import pwd  # noqa: PLC0415  # Linux only; the host tests import this tool on Windows too
+
+        return f"/run/user/{pwd.getpwnam(SESSION_USER).pw_uid}/{CONTROL_NAME}"
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    return f"{runtime}/{CONTROL_NAME}"
+
+
+def control_request(request: str, seconds: float, path: str | None = None) -> list[str]:
+    """Send one request to the driver's pairing socket and return its answers until it hangs up."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    try:
+        sock.settimeout(seconds)
+        sock.connect(path or control_path())
+        sock.send(request.encode())
+        answers: list[str] = []
+        while True:
+            data = sock.recv(256)
+            if not data:
+                return answers
+            answers.append(data.decode(errors="replace"))
+    finally:
+        sock.close()
+
+
+def control_command(args: argparse.Namespace) -> tuple[str, float]:
+    """Return the driver's request for a pair, unpair or status command and how long to wait for it."""
+    if args.command == "pair":
+        return f"pair {args.hand} {round(args.seconds)}", args.seconds + CONTROL_SLACK_S
+    if args.command == "unpair":
+        return f"unpair {args.hand}", CONTROL_ANSWER_S
+    return "status", CONTROL_ANSWER_S
+
+
+def through_driver(args: argparse.Namespace, path: str | None = None) -> int:
+    """Run pair, unpair or status through the running session's driver and print its answers as JSON."""
+    request, seconds = control_command(args)
+    try:
+        answers = control_request(request, seconds, path)
+    except OSError as e:
+        print(f"pico4-station: the driver's pairing socket: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps({"command": args.command, "through": "driver", "answers": answers}, indent=1))
+    return 0
+
+
+def _parser() -> argparse.ArgumentParser:
+    """Build the command line: one subcommand per station or controller action."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("listen", help="print frames the station sends")
+    p.add_argument("--seconds", type=float, default=5.0)
+    p = sub.add_parser("power", help="station power through the driver")
+    p.add_argument("state", choices=("on", "off", "cycle"))
+    sub.add_parser("version", help="query the station firmware version")
+    p = sub.add_parser(
+        "wake", help="the stock wake-up queries (version, work mode, crash info, whitelist), then listen"
+    )
+    p.add_argument("--seconds", type=float, default=20.0)
+    p = sub.add_parser("imu", help="switch the controllers' IMU stream to the sensor DSP")
+    p.add_argument("state", choices=("on", "off"))
+    p.add_argument("--controllers", default="0,1", help="comma-separated indices (0 left, 1 right)")
+    p = sub.add_parser("camera", help="tracking-camera frame sync (the cameras' FSIN pulses)")
+    p.add_argument("op", choices=("init", "on", "off", "fps", "para"))
+    p.add_argument("--camera", type=int, default=0, help="1..4, 0 for all (on/off)")
+    p.add_argument("--exposure-first-row", type=int, default=2, choices=(0, 1, 2), help="init flag (PICO OS: 2)")
+    p.add_argument("--resolution", type=int, default=0, choices=(0, 1), help="init flag")
+    p.add_argument("--fps", type=int, default=1, choices=(1, 2), help="station frame-rate setting")
+    p.add_argument("--exposure", default="200", help="para: 8 comma-separated u16 exposures (or one for all)")
+    p.add_argument("--gain", default="16", help="para: 8 comma-separated gains (or one for all)")
+    p.add_argument(
+        "--param",
+        type=int,
+        default=52,
+        help="para: the u16 at bytes 13-14 (PICO OS: 52 at 50 Hz; 0 brightens the LED frames)",
+    )
+    p.add_argument("--index", type=int, default=0, help="para: the event index at byte 15")
+    p = sub.add_parser("vibrate", help="vibrate a controller (level 0 stops)")
+    p.add_argument("hand", choices=("left", "right"))
+    p.add_argument("--level", type=int, default=255, help="0-255, scaled to PICO OS's default 75 %%")
+    p.add_argument("--ms", type=int, default=300, help="duration; the controller stops by itself")
+    p = sub.add_parser("info", help="a controller's status, versions, serial and radio address")
+    p.add_argument("hand", choices=("left", "right"))
+    p = sub.add_parser("calibration", help="a controller's calibration record (IMU, LEDs) from the station")
+    p.add_argument("hand", choices=("left", "right"))
+    p.add_argument("--raw", help="also write the 12 chunks (32 bytes each) to this file")
+    p = sub.add_parser("pair", help="pair a controller: hold its Trigger and Home for 6 s meanwhile")
+    p.add_argument("hand", choices=("left", "right"))
+    p.add_argument(
+        "--seconds", type=float, default=60.0, help="how long the station waits for it (1-600 through the driver)"
+    )
+    p = sub.add_parser("unpair", help="forget a controller; it connects again only after pair")
+    p.add_argument("hand", choices=("left", "right"))
+    sub.add_parser("status", help="which controllers are connected (through the running session's driver)")
+    return parser
+
+
+def camera_payload(args: argparse.Namespace) -> bytes:
+    """Build the camera command's payload from the command line."""
+    if args.op == "init":
+        return bytes([CAMERA_INIT, 0, args.exposure_first_row, args.resolution])
+    if args.op == "fps":
+        return bytes([CAMERA_FPS, 0, args.fps])
+    if args.op == "para":
+        exp = [int(x) for x in args.exposure.split(",")]
+        gain = [int(x) for x in args.gain.split(",")]
+        exp = exp * 8 if len(exp) == 1 else exp
+        gain = gain * 8 if len(gain) == 1 else gain
+        body = bytearray([CAMERA_SET_PARA])
+        for i in range(4):
+            body += struct.pack("<HB", exp[i], gain[i])
+        body += struct.pack("<HB", args.param, args.index)
+        for i in range(4, 8):
+            body += struct.pack("<HB", exp[i], gain[i])
+        return bytes(body)
+    return bytes([CAMERA_STREAM, args.camera, 1 if args.op == "on" else 2])
+
+
+def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915  # one branch per subcommand, on hardware
+    """Run one subcommand on the station and print what came back as JSON."""
+    args = _parser().parse_args(argv)
+
+    if args.command == "status":
+        return through_driver(args)
+    try:
+        st = Station()
+    except StationBusyError as e:
+        if args.command in ("pair", "unpair"):
+            return through_driver(args)
+        print(f"pico4-station: {e}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"pico4-station: {e}", file=sys.stderr)
+        return 1
+    out: dict[str, Any] = {"command": args.command}
+    try:
+        if args.command == "power":
+            if args.state == "off":
+                out["controllers_slow_adv"] = st.controllers_slow_adv()
+            if args.state == "cycle":
+                st.power(on=False)
+                time.sleep(0.1)
+            st.power(on=args.state != "off")
+            time.sleep(0.01)
+            # The announcement comes within 3 s, and the station waits for its answer.
+            out["frames"] = len(st.collect(3.2 if args.state != "off" else 1.0))
+        elif args.command == "listen":
+            out["frames"] = len(st.collect(args.seconds))
+        elif args.command == "wake":
+            out["version"] = [r.hex() for r in st.request(CMD_VERSION)]
+            for q in QUERIES:
+                out[f"query_{q:#04x}"] = [r.hex() for r in st.request(q, QUERY_PAYLOAD.get(q, b""), 0.5)]
+            out["frames"] = len(st.collect(args.seconds))
+        elif args.command == "version":
+            replies = st.request(CMD_VERSION)
+            out["replies"] = [r.hex() for r in replies]
+        elif args.command == "camera":
+            payload = camera_payload(args)
+            out["replies"] = [r.hex() for r in st.request(CMD_CAMERA, payload)]
+        elif args.command == "vibrate":
+            data = motor_frame(args.hand, args.level, args.ms)
+            st.send(data)
+            out["sent"] = data.hex()
+            out["frames"] = len(st.collect(0.5))
+        elif args.command == "info":
+            out["info"] = st.controller_info(args.hand)
+        elif args.command == "calibration":
+            try:
+                chunks = st.controller_calibration(args.hand)
+            except OSError as e:
+                out["error"] = str(e)
+            else:
+                out["calibration"] = calibration_floats(chunks)
+                if args.raw:
+                    Path(args.raw).write_bytes(b"".join(chunks[i] for i in sorted(chunks)))
+        elif args.command == "pair":
+            out["pair"] = st.pair(args.hand, args.seconds)
+        elif args.command == "unpair":
+            out["unpaired"] = st.unpair(args.hand)
+        elif args.command == "imu":
+            for c in (int(x) for x in args.controllers.split(",")):
+                replies = st.request(CMD_IMU_STREAM, bytes([c, 1 if args.state == "on" else 0]))
+                out[f"controller{c}"] = [r.hex() for r in replies]
+    finally:
+        out["log"] = st.log[-50:]
+        st.close()
+    print(json.dumps(out, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

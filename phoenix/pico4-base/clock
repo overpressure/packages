@@ -1,0 +1,21 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# The wall clock as PICO OS keeps it: the PMIC's RTC counts from an arbitrary base (it reads 1971)
+# and cannot be set, so Qualcomm's time daemon stores the wall clock's offset to it in persist
+# (time/ats_2, milliseconds, 64-bit little endian). The clock is RTC + offset, set at boot before
+# timesyncd; persist stays read-only, so the offset is PICO OS's last one and network time
+# corrects the drift since. Only forward: a later clock (timesyncd's saved one) stays.
+#   clock [ATS_FILE [RTC_SECONDS_FILE]]
+set -eu
+ats=${1:-/mnt/vendor/persist/time/ats_2}
+rtc=${2:-/sys/class/rtc/rtc0/since_epoch}
+[ -r "$ats" ] && [ -r "$rtc" ] || { echo "clock: no RTC offset from PICO OS"; exit 0; }
+[ "$(stat -c %s "$ats")" = 8 ] || { echo "clock: $ats is no 64-bit offset" >&2; exit 1; }
+offset_ms=$(od -An -t d8 "$ats" | tr -d ' ')
+wall=$(($(cat "$rtc") + offset_ms / 1000))
+if [ "$wall" -gt "$(date +%s)" ]; then
+	date -u -s "@$wall" >/dev/null
+	echo "clock: set from the RTC and PICO OS's offset"
+else
+	echo "clock: kept (ahead of the RTC and PICO OS's offset)"
+fi

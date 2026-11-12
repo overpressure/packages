@@ -1,0 +1,196 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Unlicense
+"""The Steam client's interface language, for the first-run setup (docs/session.md#first-run-setup).
+
+The client keeps its language in ~/.steam/registry.vdf (HKCU/Software/Valve/Steam and
+.../Steamsteamglobal) and writes that file when it exits. During the first-run setup the client
+waits to start, and starts in the language written here; a running client restarts in it, as its
+own language setting does, the file changed between its stop and its start.
+
+    steam-language german
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+from typing import Union
+
+#: The client's interface languages (its localization files).
+LANGUAGES = (
+    "arabic",
+    "brazilian",
+    "bulgarian",
+    "czech",
+    "danish",
+    "dutch",
+    "english",
+    "finnish",
+    "french",
+    "german",
+    "greek",
+    "hungarian",
+    "indonesian",
+    "italian",
+    "japanese",
+    "koreana",
+    "latam",
+    "malay",
+    "norwegian",
+    "polish",
+    "portuguese",
+    "romanian",
+    "russian",
+    "schinese",
+    "spanish",
+    "swedish",
+    "tchinese",
+    "thai",
+    "turkish",
+    "ukrainian",
+    "vietnamese",
+)
+REGISTRY = Path.home() / ".steam/registry.vdf"
+#: Where the client keeps its language, below the root key.
+PATHS = (("HKCU", "Software", "Valve", "Steam"), ("HKCU", "Software", "Valve", "Steamsteamglobal"))
+
+Node = list[tuple[str, Union[str, "Node"]]]
+
+
+def tokens(text: str) -> list[str]:
+    """Split a VDF text into quoted strings (with their quotes) and braces."""
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c in "{}":
+            out.append(c)
+            i += 1
+        elif c == '"':
+            j = i + 1
+            while j < len(text) and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i : j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            i = text.find("\n", i) if "\n" in text[i:] else len(text)
+        else:
+            i += 1
+    return out
+
+
+def parse(text: str) -> Node:
+    """Read a VDF text into ordered (key, value or child) pairs."""
+    stack: list[Node] = [[]]
+    key: str | None = None
+    for t in tokens(text):
+        if t == "{":
+            child: Node = []
+            stack[-1].append((key or "", child))
+            stack.append(child)
+            key = None
+        elif t == "}":
+            if len(stack) == 1:
+                msg = "unbalanced braces"
+                raise ValueError(msg)
+            stack.pop()
+        elif key is None:
+            key = t[1:-1]
+        else:
+            stack[-1].append((key, t[1:-1]))
+            key = None
+    if len(stack) != 1 or key is not None:
+        msg = "truncated"
+        raise ValueError(msg)
+    return stack[0]
+
+
+def dump(node: Node, depth: int = 0) -> str:
+    """Write ordered pairs back as the client writes VDF: tabs, a key and its value two tabs apart."""
+    pad = "\t" * depth
+    lines = []
+    for key, value in node:
+        if isinstance(value, list):
+            lines += [f'{pad}"{key}"', f"{pad}{{", dump(value, depth + 1).rstrip("\n"), f"{pad}}}"]
+        else:
+            lines.append(f'{pad}"{key}"\t\t"{value}"')
+    return "\n".join(line for line in lines if line) + "\n"
+
+
+def child(node: Node, key: str) -> Node:
+    """Return the child @p key of @p node (keys ignore case, as the client's), made when missing."""
+    for k, value in node:
+        if k.lower() == key.lower() and isinstance(value, list):
+            return value
+    made: Node = []
+    node.append((key, made))
+    return made
+
+
+def set_language(text: str, language: str) -> str:
+    """Return the registry text with @p language in both of the client's places."""
+    root = parse(text) if text.strip() else []
+    registry = child(root, "Registry")
+    for path in PATHS:
+        node = registry
+        for key in path:
+            node = child(node, key)
+        for i, (k, value) in enumerate(node):
+            if k.lower() == "language" and not isinstance(value, list):
+                node[i] = (k, language)
+                break
+        else:
+            node.append(("language", language))
+    return dump(root)
+
+
+def systemctl(*args: str) -> None:
+    """Run systemctl for the session's user units."""
+    # A fixed command; the arguments come from this file only.
+    subprocess.run(["systemctl", "--user", *args], check=True, timeout=60)  # noqa: S603, S607  # systemctl from PATH
+
+
+def client_running() -> bool:
+    """Tell whether the client runs (its unit active; during the first-run setup it waits to start)."""
+    # A fixed command, as systemctl().
+    state = subprocess.run(  # fixed arguments
+        ["systemctl", "--user", "is-active", "steam.service"],  # noqa: S607  # systemctl from PATH
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    return state.stdout.strip() == "active"
+
+
+def write(language: str) -> None:
+    """Write @p language into the client's registry, whole or not at all."""
+    text = REGISTRY.read_text(encoding="utf-8") if REGISTRY.exists() else ""
+    new = set_language(text, language)
+    REGISTRY.parent.mkdir(parents=True, exist_ok=True)
+    tmp = REGISTRY.with_name(REGISTRY.name + ".pico4")
+    tmp.write_text(new, encoding="utf-8")
+    tmp.replace(REGISTRY)
+
+
+def main(argv: list[str]) -> int:
+    """Set the language; a running client restarts in it, one still to start starts in it."""
+    _, *rest = argv
+    if len(rest) != 1 or rest[0] not in LANGUAGES:
+        print(f"usage: steam-language {{{','.join(LANGUAGES)}}}", file=sys.stderr)
+        return 2
+    if not client_running():
+        write(rest[0])
+    else:
+        systemctl("stop", "steam.service")
+        try:
+            write(rest[0])
+        finally:
+            systemctl("start", "steam.service")
+    print(f"steam-language: {rest[0]}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

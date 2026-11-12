@@ -1,0 +1,16 @@
+# wlan0's address from persist (ath11k takes the chip's own), before NetworkManager takes the
+# interface.
+[Unit]
+Description=Wi-Fi address from persist
+After=pico4-persist.service sys-subsystem-net-devices-wlan0.device
+BindsTo=sys-subsystem-net-devices-wlan0.device
+Before=NetworkManager.service
+ConditionPathExists=/mnt/vendor/persist/wlan_mac.bin
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/wlan-address
+
+[Install]
+WantedBy=sys-subsystem-net-devices-wlan0.device

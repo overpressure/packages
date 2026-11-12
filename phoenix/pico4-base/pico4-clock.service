@@ -1,0 +1,17 @@
+# The wall clock from the RTC and PICO OS's offset in persist (docs/userspace.md), before
+# timesyncd and everything that waits for time-set.target.
+[Unit]
+Description=Wall clock from the RTC and PICO OS's offset
+DefaultDependencies=no
+After=pico4-persist.service
+Wants=time-set.target
+Before=time-set.target systemd-timesyncd.service sysinit.target
+ConditionPathExists=/sys/class/rtc/rtc0/since_epoch
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/clock
+
+[Install]
+WantedBy=sysinit.target

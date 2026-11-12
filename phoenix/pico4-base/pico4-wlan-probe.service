@@ -1,0 +1,16 @@
+# The Wi-Fi chip: probed again once its firmware is in /usr/lib/firmware, before NetworkManager.
+[Unit]
+Description=Wi-Fi chip (QCA6390)
+DefaultDependencies=no
+ConditionPathExists=/usr/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin
+ConditionPathExists=/sys/bus/pci/drivers/ath11k_pci
+After=local-fs.target
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/wlan-probe
+
+[Install]
+WantedBy=sysinit.target

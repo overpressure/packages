@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# wlan0's address from persist's wlan_mac.bin (Intf0MacAddress=...), the one PICO assigned to the
+# headset: ath11k takes the chip's own. The interface is down until NetworkManager takes it, which
+# keeps the address ("preserve").
+#
+# The chip's own address changes at each boot, and the Steam client names it in the Wi-Fi profiles
+# it saves: after a reboot NetworkManager would find no device for them. This runs before
+# NetworkManager and takes that line out of the profiles.
+#   wlan-address [MAC_FILE [INTERFACE [PROFILES]]]
+set -eu
+file=${1:-/mnt/vendor/persist/wlan_mac.bin}
+dev=${2:-wlan0}
+profiles=${3:-/etc/NetworkManager/system-connections}
+hex=$(sed -n 's/^Intf0MacAddress=\([0-9A-Fa-f]\{12\}\).*/\1/p' "$file" | head -n 1)
+[ -n "$hex" ] || { echo "wlan-address: no Intf0MacAddress in $file" >&2; exit 1; }
+mac=$(echo "$hex" | sed 's/\(..\)/\1:/g; s/:$//' | tr 'A-F' 'a-f')
+ip link set dev "$dev" down
+ip link set dev "$dev" address "$mac"
+echo "wlan-address: $dev has persist's address"
+for profile in "$profiles"/*; do
+	if [ -f "$profile" ] && grep -q '^mac-address=' "$profile"; then
+		sed -i '/^mac-address=/d' "$profile"
+	fi
+done

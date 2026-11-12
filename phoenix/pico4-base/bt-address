@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
+"""The Bluetooth controller's public address from persist, as PICO OS sets it (pico_bt_mac).
+
+  bt-address FILE [INDEX]
+
+The QCA6390 has no address of its own: hci_qca registers it unconfigured until one is set, and
+bluetoothd leaves an unconfigured controller alone. This sends the kernel's management command
+Set Public Address (btmgmt's public-addr, which hangs without a terminal) and waits for its reply
+with a deadline. Prints no address.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import os
+import select
+import socket
+import struct
+import sys
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+AF_BLUETOOTH, BTPROTO_HCI, HCI_DEV_NONE, HCI_CHANNEL_CONTROL = 31, 1, 0xFFFF, 3
+MGMT_OP_SET_PUBLIC_ADDRESS = 0x0039
+MGMT_EV_CMD_COMPLETE, MGMT_EV_CMD_STATUS = 0x0001, 0x0002
+MGMT_STATUS_INVALID_INDEX = 0x11
+TIMEOUT_S = 10.0
+RETRY_S = 0.5
+ADDRESS_LEN = 6  # bytes of a Bluetooth address
+REPLY_LEN = 9  # a reply's event header (code, index, length), opcode and status
+READ_LEN = 512  # more than any management event
+
+
+def address(text: str) -> bytes:
+    """Convert "AA:BB:...:FF" to the controller's byte order (least significant first)."""
+    raw = bytes.fromhex(text.strip().replace(":", ""))
+    if len(raw) != ADDRESS_LEN:
+        msg = "not a Bluetooth address"
+        raise ValueError(msg)
+    return bytes(reversed(raw))
+
+
+def command(index: int, bdaddr: bytes) -> bytes:
+    """Build Set Public Address for controller INDEX."""
+    return struct.pack("<HHH", MGMT_OP_SET_PUBLIC_ADDRESS, index, len(bdaddr)) + bdaddr
+
+
+def reply_status(event: bytes, index: int) -> int | None:
+    """Return the status of the command's reply in EVENT, None for any other event."""
+    if len(event) < REPLY_LEN:
+        return None
+    code, ev_index, _ = struct.unpack("<HHH", event[:6])
+    opcode, status = struct.unpack("<HB", event[6:9])
+    if (
+        code in (MGMT_EV_CMD_COMPLETE, MGMT_EV_CMD_STATUS)
+        and ev_index == index
+        and opcode == MGMT_OP_SET_PUBLIC_ADDRESS
+    ):
+        return status
+    return None
+
+
+def control_socket() -> int:
+    """Open the kernel's management channel.
+
+    Python's socket module cannot bind an HCI socket to a channel: libc does it.
+    """
+    libc = ctypes.CDLL(None, use_errno=True)
+    fd = libc.socket(AF_BLUETOOTH, socket.SOCK_RAW | socket.SOCK_CLOEXEC, BTPROTO_HCI)
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), "management socket")
+    sockaddr = struct.pack("<HHH", AF_BLUETOOTH, HCI_DEV_NONE, HCI_CHANNEL_CONTROL)
+    if libc.bind(fd, sockaddr, len(sockaddr)) != 0:
+        raise OSError(ctypes.get_errno(), "binding the management socket")
+    return fd
+
+
+def main(argv: Sequence[str]) -> int:
+    """Set the address from FILE, retrying while the controller is still in its setup."""
+    if len(argv) not in (2, 3):
+        print("usage: bt-address FILE [INDEX]", file=sys.stderr)
+        return 2
+    index = int(argv[2]) if argv[2:] else 0
+    bdaddr = address(Path(argv[1]).read_text(encoding="ascii"))
+    fd = control_socket()
+    deadline = time.monotonic() + TIMEOUT_S
+    status = None
+    while time.monotonic() < deadline:
+        os.write(fd, command(index, bdaddr))
+        status = None
+        while status is None and select.select([fd], [], [], max(0.0, deadline - time.monotonic()))[0]:
+            status = reply_status(os.read(fd, READ_LEN), index)
+        # The device appears before its setup (the firmware download) ends; the kernel offers the
+        # controller to the management interface only afterwards.
+        if status != MGMT_STATUS_INVALID_INDEX:
+            break
+        time.sleep(RETRY_S)
+    if status is None:
+        print(f"bt-address: no reply for hci{index} within {TIMEOUT_S:.0f} s", file=sys.stderr)
+        return 1
+    print(f"bt-address: hci{index} " + ("set from persist" if status == 0 else f"refused it (status {status})"))
+    return 0 if status == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

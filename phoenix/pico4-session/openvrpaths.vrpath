@@ -1,0 +1,20 @@
+{
+	"config" : 
+	[
+		"/home/steamos/.local/share/Steam/config"
+	],
+	"external_drivers" : 
+	[
+		"/usr/share/steamvr-monado"
+	],
+	"jsonid" : "vrpathreg",
+	"log" : 
+	[
+		"/home/steamos/.local/share/Steam/logs"
+	],
+	"runtime" : 
+	[
+		"/opt/steamvr"
+	],
+	"version" : 1
+}

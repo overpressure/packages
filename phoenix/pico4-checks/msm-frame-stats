@@ -1,0 +1,427 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
+"""The panels' frame statistics on msm, from its own events (docs/session.md).
+
+The compositor
+drives the display itself, and the kernel's tracepoints tell the same: the flips the display
+completed (dpu_crtc_complete_flip), the vblanks (drm_vblank_event) and the GPU jobs of the
+presenting process's threads (msm_gpu_submit_retired names the submitting thread, with the GPU's
+own time per job). The statistics (commits, commit_hz, late, stalls, max_interval_ms, vblank_hz)
+are what session-performance judges, with the GPU time per job (gpu_ms).
+
+  msm-frame-stats record SECONDS PID OUT.json   root: records SECONDS of tracefs events
+  msm-frame-stats parse TRACE TID...            the statistics of a recorded trace
+  msm-frame-stats trace SECONDS PID OUT.trace   root: records the events and the GPU's submits and
+                                                the scheduler's switches, for misses
+  msm-frame-stats misses TRACE                  where each refresh without a job lost its time
+
+A refresh without a job is one in which the compositor's job ended after the vblank. Its time
+splits into the CPU's part (from the vblank before to the submit), the submit's wait (its fences
+and the GPU scheduler's worker, to the flush), the GPU's wait (to the job's start) and the GPU's
+own time; with the threads that held the submitting thread's core while it waited, and the GPU
+time of the other processes in that refresh.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import statistics
+import sys
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
+TRACING = Path("/sys/kernel/tracing")
+EVENTS = ("dpu/dpu_crtc_complete_flip", "drm/drm_vblank_event", "drm_msm_gpu/msm_gpu_submit_retired")
+LINE = re.compile(r"\s*.+?-\d+\s+\[\d+\]\s+\S+\s+([\d.]+): (\w+): ?(.*)")
+LATE_REFRESHES = 1.5  # a commit more than 1.5 refreshes after the one before
+STALL_S = 0.100  # a gap above 100 ms
+HELPERS = {"steamwebhelper", "vrwebhelper"}
+RECORD_ARGC = 5  # msm-frame-stats record SECONDS PID OUT.json
+PARSE_MIN_ARGC = 4  # msm-frame-stats parse TRACE TID...
+MISSES_ARGC = 3  # msm-frame-stats misses TRACE
+# The trace command's events: the statistics' and the GPU's submits and the scheduler's switches.
+TRACE_EVENTS = (
+    *EVENTS,
+    "drm_msm_gpu/msm_gpu_submit",
+    "drm_msm_gpu/msm_gpu_submit_flush",
+    "sched/sched_switch",
+    "sched/sched_wakeup",
+)
+FULL_LINE = re.compile(r"\s*(.+?)-(\d+)\s+\[(\d+)\]\s+\S+\s+([\d.]+): (\w+): ?(.*)")
+SWITCH = re.compile(
+    r"prev_comm=(.*) prev_pid=(\d+) prev_prio=(-?\d+) prev_state=(\S+) ==> next_comm=(.*) next_pid=(\d+)"
+)
+WAKEUP = re.compile(r"comm=(.*) pid=(\d+) prio=(-?\d+)")
+FIELDS = re.compile(r"(\w+)=(-?\d+)")
+MISS_LIST = 40  # the misses listed one by one
+
+
+def job_margins(job_ends: Iterable[float], vblanks: Iterable[float], refresh: float) -> dict[str, float]:
+    """Measure how long before each vblank the compositor's last job of that refresh ended, in ms.
+
+    A vblank within the jobs' span with no job in its refresh counts as 0: its frame had no margin.
+    """
+    ends = sorted(job_ends)
+    margins = []
+    i = 0
+    for v in sorted(vblanks):
+        if not ends or v <= ends[0] or v > ends[-1] + refresh:
+            continue
+        while i + 1 < len(ends) and ends[i + 1] < v:
+            i += 1
+        margin = v - ends[i]
+        margins.append(margin * 1e3 if 0 < margin <= refresh else 0.0)
+    if not margins:
+        return {}
+    margins.sort()
+    # p99: 99 % of the frames had at least this margin.
+    return {
+        "p50": round(margins[len(margins) // 2], 3),
+        "p99": round(margins[len(margins) // 100], 3),
+        "frames": len(margins),
+        "without_a_job": sum(m == 0.0 for m in margins),
+    }
+
+
+def events(
+    lines: Iterable[str], tids: set[int], helper_tids: set[int]
+) -> tuple[dict[str, list[float]], list[float], list[float], list[float], int]:
+    """Sort trace lines into flips per CRTC, vblanks, the threads' GPU times (ms) and ends, the helpers' GPU ns."""
+    flips: dict[str, list[float]] = {}
+    vblanks: list[float] = []
+    gpu: list[float] = []
+    ends: list[float] = []
+    helper_ns = 0
+    for line in lines:
+        m = LINE.match(line)
+        if not m:
+            continue
+        t, event, fields = float(m.group(1)), m.group(2), m.group(3)
+        if event == "dpu_crtc_complete_flip":
+            flips.setdefault(fields, []).append(t)
+        elif event == "drm_vblank_event":
+            vblanks.append(t)
+        elif event == "msm_gpu_submit_retired":
+            f = dict(re.findall(r"(\w+)=(-?\d+)", fields))
+            pid = int(f.get("pid", -1))
+            if pid in tids:
+                gpu.append(int(f["elapsed"]) / 1e6)
+                ends.append(t)
+            elif pid in helper_tids:
+                helper_ns += int(f["elapsed"])
+    return flips, vblanks, gpu, ends, helper_ns
+
+
+def parse(lines: Iterable[str], tids: Iterable[int | str], helper_tids: Iterable[int | str] = ()) -> dict[str, Any]:
+    """Compute the statistics of trace lines.
+
+    They cover the flips of the busiest CRTC, the vblanks, the threads' GPU jobs, and the web helpers'
+    share of the GPU, which on a table can be idle when worn it would not be.
+    """
+    flips, vblanks, gpu, ends, helper_ns = events(lines, {int(t) for t in tids}, {int(t) for t in helper_tids})
+    stats: dict[str, Any] = {
+        "target": "msm",
+        "commits": 0,
+        "commit_hz": 0.0,
+        "late": 0,
+        "stalls": 0,
+        "max_interval_ms": 0.0,
+        "vblank_hz": 0.0,
+        "gpu_jobs": len(gpu),
+    }
+    if len(vblanks) > 1:
+        stats["vblank_hz"] = round((len(vblanks) - 1) / (vblanks[-1] - vblanks[0]), 3)
+    refresh = 1 / stats["vblank_hz"] if stats["vblank_hz"] else 1 / 90
+    times = max(flips.values(), key=len) if flips else []
+    stats["commits"] = len(times)
+    if len(times) > 1:
+        intervals = [b - a for a, b in zip(times, times[1:])]
+        stats["commit_hz"] = round((len(times) - 1) / (times[-1] - times[0]), 3)
+        stats["late"] = sum(i > LATE_REFRESHES * refresh for i in intervals)
+        stats["stalls"] = sum(i > STALL_S for i in intervals)
+        stats["max_interval_ms"] = round(max(intervals) * 1e3, 3)
+    if gpu:
+        gpu.sort()
+        stats["gpu_ms"] = {
+            "mean": round(statistics.fmean(gpu), 3),
+            "p90": round(gpu[len(gpu) * 9 // 10], 3),
+            "max": round(gpu[-1], 3),
+        }
+    margins = job_margins(ends, vblanks, refresh)
+    if margins:
+        stats["job_margin_ms"] = margins
+    if len(vblanks) > 1:
+        stats["web_helper_gpu_percent"] = round(helper_ns / ((vblanks[-1] - vblanks[0]) * 1e9) * 100, 2)
+    return stats
+
+
+def write(path: Path, text: str) -> None:
+    """Write a tracefs file."""
+    path.write_text(text)
+
+
+def threads(pid: int) -> set[int]:
+    """Return the process's thread ids, none once it is gone."""
+    try:
+        return {int(t.name) for t in Path(f"/proc/{pid}/task").iterdir()}
+    except OSError:
+        return set()
+
+
+def command_name(proc: Path) -> str:
+    """Return a process's command name, empty once it is gone."""
+    try:
+        return (proc / "comm").read_text().strip()
+    except OSError:
+        return ""
+
+
+def helpers() -> set[int]:
+    """Return the threads of the web helpers, the Steam client's and SteamVR's, which draw the panels."""
+    tids: set[int] = set()
+    for proc in Path("/proc").glob("[0-9]*"):
+        if command_name(proc) in HELPERS:
+            tids |= threads(int(proc.name))
+    return tids
+
+
+def record(seconds: float, pid: int) -> dict[str, Any]:
+    """Record SECONDS of the events with tracefs and parse them."""
+    tids = threads(pid)
+    write(TRACING / "tracing_on", "0")
+    write(TRACING / "trace", "")
+    write(TRACING / "buffer_size_kb", "8192")
+    for event in EVENTS:
+        write(TRACING / "events" / event / "enable", "1")
+    try:
+        write(TRACING / "tracing_on", "1")
+        time.sleep(seconds)
+        write(TRACING / "tracing_on", "0")
+        trace = (TRACING / "trace").read_text(errors="replace").splitlines()
+        tids |= threads(pid)
+        helper_tids = helpers()
+    finally:
+        for event in EVENTS:
+            write(TRACING / "events" / event / "enable", "0")
+        write(TRACING / "trace", "")
+        write(TRACING / "buffer_size_kb", "1408")
+    return parse(trace, tids, helper_tids)
+
+
+def trace(seconds: float, pid: int, out: Path) -> None:
+    """Record SECONDS of the trace command's events into OUT, after the threads of PID and of the helpers."""
+    tids = threads(pid)
+    # An event this kernel lacks is left out (and named in the trace's header), not an error.
+    events = [e for e in TRACE_EVENTS if (TRACING / "events" / e / "enable").exists()]
+    missing = " ".join(e for e in TRACE_EVENTS if e not in events)
+    write(TRACING / "tracing_on", "0")
+    write(TRACING / "trace", "")
+    write(TRACING / "buffer_size_kb", "16384")
+    # Wakeups only of the compositor's threads: the switches tell who ran instead.
+    wakeup = TRACING / "events/sched/sched_wakeup/filter"
+    if wakeup.exists():
+        write(wakeup, " || ".join(f"pid == {t}" for t in sorted(tids)) or "0")
+    for event in events:
+        write(TRACING / "events" / event / "enable", "1")
+    try:
+        write(TRACING / "tracing_on", "1")
+        time.sleep(seconds)
+        write(TRACING / "tracing_on", "0")
+        lines = (TRACING / "trace").read_text(errors="replace")
+        tids |= threads(pid)
+        own, others = " ".join(map(str, sorted(tids))), " ".join(map(str, sorted(helpers())))
+        out.write_text(f"# compositor: {own}\n# helpers: {others}\n# missing events: {missing}\n" + lines)
+    finally:
+        for event in events:
+            write(TRACING / "events" / event / "enable", "0")
+        if wakeup.exists():
+            write(wakeup, "0")
+        write(TRACING / "trace", "")
+        write(TRACING / "buffer_size_kb", "1408")
+
+
+def _median(values: list[float]) -> float | None:
+    """Return the median, rounded, or None without values."""
+    return round(statistics.median(values), 3) if values else None
+
+
+class _Trace:
+    """The trace command's events, sorted for misses."""
+
+    def __init__(self, lines: Iterable[str]) -> None:
+        self.tids: set[int] = set()
+        self.vblanks: list[float] = []
+        self.submits: dict[int, float] = {}
+        self.flushes: dict[int, float] = {}
+        self.retired: list[tuple[float, int, int, float]] = []  # retire time, submit id, pid, GPU ms
+        self.names: dict[int, str] = {}
+        self.wakeups: dict[int, list[float]] = {}
+        self.switches: dict[int, list[tuple[float, int, int]]] = {}  # per CPU: time, out, in
+        for line in lines:
+            if line.startswith("# compositor:"):
+                self.tids = {int(t) for t in line.split(":", 1)[1].split()}
+                continue
+            m = FULL_LINE.match(line)
+            if m:
+                self.add(int(m.group(3)), float(m.group(4)), m.group(5), m.group(6))
+        self.vblanks.sort()
+        self.retired.sort()
+
+    def add(self, cpu: int, t: float, event: str, fields: str) -> None:
+        """Sort one event in."""
+        if event == "drm_vblank_event":
+            self.vblanks.append(t)
+        elif event.startswith("msm_gpu_submit"):
+            f = dict(FIELDS.findall(fields))
+            ident = int(f.get("id", -1))
+            if event == "msm_gpu_submit":
+                self.submits[ident] = t
+            elif event == "msm_gpu_submit_flush":
+                self.flushes[ident] = t
+            elif event == "msm_gpu_submit_retired":
+                self.retired.append((t, ident, int(f.get("pid", -1)), int(f.get("elapsed", 0)) / 1e6))
+        elif event == "sched_switch" and (s := SWITCH.search(fields)):
+            self.names[int(s.group(2))] = s.group(1)
+            self.names[int(s.group(6))] = s.group(5)
+            self.switches.setdefault(cpu, []).append((t, int(s.group(2)), int(s.group(6))))
+        elif event == "sched_wakeup" and (w := WAKEUP.search(fields)):
+            self.names[int(w.group(2))] = w.group(1)
+            self.wakeups.setdefault(int(w.group(2)), []).append(t)
+
+    def parts(self, job: tuple[float, int, int, float], start: float) -> dict[str, float | None]:
+        """Split a job's time from START (the vblank before) into its parts, in ms."""
+        t, ident, _, gpu_ms = job
+        sub, flush = self.submits.get(ident), self.flushes.get(ident)
+        return {
+            "submit_after_vblank_ms": round((sub - start) * 1e3, 3) if sub is not None else None,
+            "submit_wait_ms": round((flush - sub) * 1e3, 3) if sub is not None and flush is not None else None,
+            "gpu_wait_ms": round((t - gpu_ms / 1e3 - flush) * 1e3, 3) if flush is not None else None,
+            "gpu_ms": round(gpu_ms, 3),
+        }
+
+    def held(self, tid: int, since: float, until: float) -> dict[str, float]:
+        """Return who ran on the core the thread waited for, from its last wakeup before UNTIL to its start (ms)."""
+        woke = [w for w in self.wakeups.get(tid, []) if since <= w <= until]
+        if not woke:
+            return {}
+        w = woke[-1]
+        for events in self.switches.values():
+            start = next((e[0] for e in events if e[2] == tid and w <= e[0] <= until), None)
+            if start is None:
+                continue
+            ran: dict[str, float] = {}
+            runner, last = None, w
+            for at, _, incoming in events:
+                if at <= w:
+                    runner = incoming
+                    continue
+                if at > start:
+                    break
+                if runner is not None and runner != tid:
+                    name = self.names.get(runner, str(runner))
+                    ran[name] = ran.get(name, 0.0) + (at - last) * 1e3
+                runner, last = incoming, at
+            return {k: round(v, 3) for k, v in ran.items() if v >= 0.01}  # noqa: PLR2004  # below 10 µs is noise
+        return {}
+
+    def other_gpu(self, start: float, end: float) -> dict[str, float]:
+        """Return the other processes' GPU time (ms) of the jobs that retired in (START, END]."""
+        used: dict[str, float] = {}
+        for t, _, pid, gpu_ms in self.retired:
+            if pid not in self.tids and start < t <= end:
+                name = self.names.get(pid, str(pid))
+                used[name] = used.get(name, 0.0) + gpu_ms
+        return used
+
+
+def _add(into: dict[str, float], values: dict[str, float]) -> None:
+    for k, v in values.items():
+        into[k] = into.get(k, 0.0) + v
+
+
+def _top(counts: dict[str, float], per: int = 1) -> dict[str, float]:
+    return {k: round(v / max(per, 1), 3) for k, v in sorted(counts.items(), key=lambda kv: -kv[1])[:10]}
+
+
+def _medians(rows: list[dict[str, Any]]) -> dict[str, float | None]:
+    keys = ("submit_after_vblank_ms", "submit_wait_ms", "gpu_wait_ms", "gpu_ms")
+    return {k: _median([r[k] for r in rows if r.get(k) is not None]) for k in keys}
+
+
+def misses(lines: Iterable[str]) -> dict[str, Any]:
+    """Tell where each refresh without a compositor job lost its time (see the module's text)."""
+    tr = _Trace(lines)
+    own = [r for r in tr.retired if r[2] in tr.tids]
+    vb = tr.vblanks
+    refresh = (vb[-1] - vb[0]) / (len(vb) - 1) if len(vb) > 1 else 1 / 90
+    missed: list[dict[str, Any]] = []
+    good: list[dict[str, Any]] = []
+    cpu_waits: dict[str, float] = {}
+    gpu_users: dict[str, float] = {}
+    gpu_users_good: dict[str, float] = {}
+    i = 0
+    for v in vb:
+        start = v - refresh
+        if not own or v <= own[0][0] or v > own[-1][0] + refresh:
+            continue
+        while i + 1 < len(own) and own[i + 1][0] < v:
+            i += 1
+        if 0 < v - own[i][0] <= refresh:
+            good.append(tr.parts(own[i], start))
+            _add(gpu_users_good, tr.other_gpu(start, v))
+            continue
+        late = next((r for r in own if r[0] > start), None)
+        if late is None:
+            continue
+        entry: dict[str, Any] = {"vblank": round(v, 6), "late_ms": round((late[0] - v) * 1e3, 3)}
+        entry.update(tr.parts(late, start))
+        sub = tr.submits.get(late[1])
+        if sub is not None:
+            entry["cpu_held_by_ms"] = tr.held(late[2], start - refresh, sub)
+            _add(cpu_waits, entry["cpu_held_by_ms"])
+        entry["other_gpu_ms"] = {k: round(ms, 3) for k, ms in tr.other_gpu(start, late[0]).items()}
+        _add(gpu_users, entry["other_gpu_ms"])
+        missed.append(entry)
+    return {
+        "refreshes": len(missed) + len(good),
+        "misses": len(missed),
+        "miss_medians": _medians(missed),
+        "good_medians": _medians(good),
+        "cpu_held_by_ms_total": _top(cpu_waits),
+        "other_gpu_ms_per_miss": _top(gpu_users, len(missed)),
+        "other_gpu_ms_per_good_refresh": _top(gpu_users_good, len(good)),
+        "miss_list": missed[:MISS_LIST],
+    }
+
+
+def main(argv: Sequence[str]) -> int:
+    """Run the record or the parse command."""
+    if len(argv) == RECORD_ARGC and argv[1] == "record":
+        stats = record(float(argv[2]), int(argv[3]))
+        Path(argv[4]).write_text(json.dumps(stats) + "\n")
+        print(json.dumps(stats))
+        return 0
+    if len(argv) >= PARSE_MIN_ARGC and argv[1] == "parse":
+        print(json.dumps(parse(Path(argv[2]).read_text(errors="replace").splitlines(), argv[3:])))
+        return 0
+    if len(argv) == RECORD_ARGC and argv[1] == "trace":
+        trace(float(argv[2]), int(argv[3]), Path(argv[4]))
+        return 0
+    if len(argv) == MISSES_ARGC and argv[1] == "misses":
+        print(json.dumps(misses(Path(argv[2]).read_text(errors="replace").splitlines()), indent=1))
+        return 0
+    print(
+        "usage: msm-frame-stats record SECONDS PID OUT.json | parse TRACE TID... | trace SECONDS PID OUT.trace"
+        " | misses TRACE",
+        file=sys.stderr,
+    )
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

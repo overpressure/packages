@@ -1,0 +1,26 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# Probe the Wi-Fi chip (QCA6390, ath11k) once its firmware is there. ath11k probes it while the
+# kernel starts, before the system image is mounted, and that probe fails for good without
+# amss.bin. The bind returns the probe's result; wlan0 appears once the chip's firmware has
+# started, and wlan-address and NetworkManager take it from there.
+. /usr/libexec/pico4/lib.sh
+set -u
+dev=""
+for d in /sys/bus/pci/devices/*; do
+	[ "$(cat "$d/vendor" 2>/dev/null)" = 0x17cb ] && [ "$(cat "$d/device" 2>/dev/null)" = 0x1101 ] && dev=${d##*/}
+done
+[ -n "$dev" ] || { log "wlan: no QCA6390 on PCIe"; exit 1; }
+if [ ! -e "/sys/bus/pci/devices/$dev/driver" ]; then
+	if ! echo "$dev" > /sys/bus/pci/drivers/ath11k_pci/bind 2>/dev/null; then
+		log "wlan: probe failed"
+		dmesg | grep ath11k | tail -n 5 | while IFS= read -r line; do log "wlan: $line"; done
+		exit 1
+	fi
+fi
+for _ in $(seq 30); do
+	[ -e /sys/class/net/wlan0 ] && { log "wlan: wlan0 up on $dev"; exit 0; }
+	sleep 0.5
+done
+log "wlan: $dev bound, but no wlan0 after 15 s"
+exit 1

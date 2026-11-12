@@ -1,0 +1,19 @@
+# The DSP loads its sensor registry for about 35 s after it boots; until then the
+# sensor service lists no IMU, and a driver that probes then (Monado, or SteamVR's
+# driver_monado) falls back to a simulated headset. pico4-sensors.target is reached
+# once the IMU is listed, or after the timeout.
+[Unit]
+Description=PICO 4 head IMU listed by the Qualcomm Sensor Core
+ConditionPathExists=/usr/lib/firmware/slpi.mdt
+ConditionPathExists=/sys/class/remoteproc
+Requires=pico4-sensorspd.service
+After=pico4-sensorspd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/pico4-imu wait --timeout 120
+TimeoutStartSec=150
+
+[Install]
+WantedBy=pico4-sensors.target

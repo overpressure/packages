@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Unlicense
+# The system's time zone, for the Steam client's time-zone setting and the first-run setup
+# (docs/session.md#first-run-setup): on SteamOS the client runs this helper with the zone it offers.
+# Only a zone of the system's zoneinfo; timedated sets it, which polkit lets the session user do
+# (/usr/share/polkit-1/rules.d/50-pico4-timezone.rules).
+#
+#   steamos-set-timezone Europe/Paris
+set -euo pipefail
+zone=${1:-}
+case $zone in
+'' | /* | *..* | *[!A-Za-z0-9_+/-]*)
+	echo "steamos-set-timezone: not a zone name: $zone" >&2
+	exit 2
+	;;
+esac
+if [[ ! -f /usr/share/zoneinfo/$zone ]]; then
+	echo "steamos-set-timezone: no such zone: $zone" >&2
+	exit 2
+fi
+exec timedatectl set-timezone "$zone"

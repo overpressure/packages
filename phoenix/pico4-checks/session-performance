@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
+"""Performance verdict of Valve's session check (docs/session.md).
+
+  session-performance FRAMES.json HOTTEST_C
+
+FRAMES is msm-frame-stats' recording of the measured window, which starts after SteamVR's
+startup. Prints one JSON object with "status" passed or failed and the limits it was held to.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+ARGC = 3  # session-performance FRAMES.json HOTTEST_C
+DISPLAY_HZ = 90.0
+LIMITS = {
+    "commit_hz_min": 0.95 * DISPLAY_HZ,
+    "late_percent_max": 1.0,  # commits more than 1.5 refreshes after the one before
+    "stalls_max": 0,  # gaps between commits above 100 ms
+    "hottest_c_max": 90.0,  # hottest thermal zone at the end of the run (docs/cooling.md)
+    # 99 % of the compositor's frames end at least this long before their vblank.
+    # 6.2-6.5 ms on a table with no panel drawn; a frame without a job in its refresh counts as 0,
+    # as with a stutter.
+    "job_margin_p99_ms_min": 1.0,
+    # Below this the web helpers drew no panel: 0.0 % idle on a table, 0.4 % as background under a
+    # game, 23-24 % when they draw.
+    "web_helper_gpu_percent_tested": 1.0,
+}
+
+
+def seconds(stats: dict[str, Any]) -> float:
+    """Time from the first to the last commit: msm-frame-stats reports commits-1 over it as commit_hz."""
+    hz, commits = stats.get("commit_hz") or 0, stats.get("commits") or 0
+    return (commits - 1) / hz if hz > 0 and commits > 1 else 0.0
+
+
+def verdict(frames: object, hottest_c: float | None) -> dict[str, Any]:
+    """Hold the statistics and the hottest zone (°C) to LIMITS."""
+    failures = []
+    if not isinstance(frames, dict):
+        return {"status": "failed", "failures": ["msm-frame-stats wrote no statistics"], "limits": LIMITS}
+    window = seconds(frames)
+    commits = frames.get("commits") or 0
+    if window <= 0 or commits <= 0:
+        return {"status": "failed", "failures": ["no commits in the measured window"], "limits": LIMITS}
+    hz = commits / window
+    late = 100.0 * (frames.get("late") or 0) / commits
+    stalls = frames.get("stalls") or 0
+
+    if hz < LIMITS["commit_hz_min"]:
+        failures.append(f"{hz:.1f} commits/s, below {LIMITS['commit_hz_min']:.1f}")
+    if late > LIMITS["late_percent_max"]:
+        failures.append(f"{late:.2f} % late commits, above {LIMITS['late_percent_max']} %")
+    if stalls > LIMITS["stalls_max"]:
+        failures.append(f"{stalls} gaps above 100 ms")
+    margin = (frames.get("job_margin_ms") or {}).get("p99")
+    if margin is not None and margin < LIMITS["job_margin_p99_ms_min"]:
+        failures.append(
+            f"99 % of the compositor's jobs end {margin:.2f} ms before their vblank, "
+            f"below {LIMITS['job_margin_p99_ms_min']} ms"
+        )
+    if hottest_c is None or not math.isfinite(hottest_c):
+        failures.append("no temperature reading")
+    elif hottest_c > LIMITS["hottest_c_max"]:
+        failures.append(f"hottest zone {hottest_c:.1f} °C, above {LIMITS['hottest_c_max']} °C")
+    # A pass without the web helpers says nothing about a Steam panel in view, where a wearer saw stutter.
+    warnings = []
+    web_helpers = frames.get("web_helper_gpu_percent")
+    if web_helpers is not None and web_helpers < LIMITS["web_helper_gpu_percent_tested"]:
+        warnings.append("no Steam panel was tested: the web helpers drew nothing in this window")
+    return {
+        "status": "failed" if failures else "passed",
+        "failures": failures,
+        "warnings": warnings,
+        "window_seconds": round(window, 2),
+        "commit_hz": round(hz, 2),
+        "late_percent": round(late, 2),
+        "stalls": stalls,
+        # The GPU's own time per job of the compositor.
+        "gpu_ms": frames.get("gpu_ms"),
+        "job_margin_ms": frames.get("job_margin_ms"),
+        # The web helpers draw the panels: at 0 the window did not test a panel in view.
+        "web_helper_gpu_percent": frames.get("web_helper_gpu_percent"),
+        "hottest_c": hottest_c,
+        "max_interval_ms": frames.get("max_interval_ms"),
+        "limits": LIMITS,
+    }
+
+
+def load(path: str) -> object:
+    """Read msm-frame-stats' JSON, None when it is missing or malformed."""
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def main(argv: Sequence[str]) -> int:
+    """Print the verdict as one JSON object."""
+    if len(argv) != ARGC:
+        print(__doc__.strip().splitlines()[2].strip(), file=sys.stderr)
+        return 2
+    try:
+        hottest = float(argv[2])
+    except ValueError:
+        hottest = None
+    print(json.dumps(verdict(load(argv[1]), hottest), ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

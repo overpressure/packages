@@ -1,0 +1,177 @@
+{
+	"camera" : {
+		"AllowBubbleInImmersiveApps" : true,
+		"autoLowerPassthroughResolution" : 1,
+		"enableCamera" : true,
+		"enableCameraForCollisionBounds" : false,
+		"lightSourceFrequency" : 0,
+		"roomView" : 2,
+		"showOnController" : false
+	},
+	"collisionBounds" : {
+		"CollisionBoundsStyle" : 2
+	},
+	"dashboard" : {
+		"_inhibitRecenterOnUserInteraction" : true,
+		"allowCurvature" : true,
+		"allowExitVR" : true,
+		"allowFreeTransform" : true,
+		"allowIncognitoMode" : true,
+		"allowPassthroughPortalManager" : false,
+		"allowQuickLaunchInVRGamepadUI" : true,
+		"allowSteamOverlays" : true,
+		"allowSystemRestart" : true,
+		"allowSystemShutdown" : true,
+		"allowSystemSleep" : true,
+		"allowVRGamepadUIViaGamescope" : true,
+		"cursorOpacity" : 1.0,
+		"defaultTheaterDistance" : 3.0,
+		"defaultTheaterScale" : 2.8,
+		"disableUnifiedDashboard_2" : false,
+		"enableMicEchoCancellation" : false,
+		"enableMicNoiseSuppression" : false,
+		"expectSteam" : true,
+		"laserRayWidthScale" : 0.8,
+		"maxInlineTabs" : 3,
+		"preferGamepadMode" : true,
+		"scaleSliderMax" : 2.5,
+		"scaleSliderMin" : 0.5,
+		"showDesktop" : false,
+		"showOnAppExit" : true,
+		"showRemoteUserOrigin" : false,
+		"steamMatchesHMDFramerate" : false,
+		"theaterScreenAlignment" : 1,
+		"wipGamepadInputWithVRLink" : true
+	},
+	"driver_cv" : {
+		"enable" : false
+	},
+	"driver_frame_controller" : {
+		"enable" : false
+	},
+	"driver_frame_hmd" : {
+		"enable" : false
+	},
+	"driver_htc" : {
+		"enable" : false
+	},
+	"driver_indexcontroller" : {
+		"enable" : false
+	},
+	"driver_indexhmd" : {
+		"enable" : false
+	},
+	"driver_monado" : {
+		"enable" : true
+	},
+	"driver_prism" : {
+		"enable" : false
+	},
+	"fsr" : {
+		"threshold0" : 1.5,
+		"threshold1" : 5.0,
+		"threshold2" : 10.0,
+		"xatten" : 1.0,
+		"yatten" : 1.0
+	},
+	"internal" : {
+		"autoCenterPlayArea" : false
+	},
+	"jsonid" : "vrsettings",
+	"power" : {
+		"pauseCompositorOnStandby" : true,
+		"turnOffScreensTimeout" : 5
+	},
+	"sl" : {
+		"enablePerfOverlay" : false,
+		"quality" : 2
+	},
+	"steamvr" : {
+		"activateMultipleDrivers" : false,
+		"allowDashboardAutoLaunchWithSteamVRHome" : true,
+		"appMotionVectors" : true,
+		"background" : "backgrounds/skybox_dome_blue.png",
+		"backgroundDomeRadius" : 22.0,
+		"backgroundOffsetX" : 0.0,
+		"backgroundOffsetZ" : -11.0,
+		"backgroundOmitDomeProjectionFloor" : true,
+		"backgroundUseDomeProjection" : true,
+		"constructHorizonHeight" : 0.0,
+		"contentAwareRoomviewMonochromeTint" : true,
+		"defaultPerAppRefreshRate" : 72.0,
+		"depthReprojectionMesh" : false,
+		"depthReprojectionMeshGridResolution" : 256,
+		"depthReprojectionMeshIgnoreMotionVectors" : false,
+		"depthReprojectionMeshScale" : 1.0,
+		"drawTrackingReferences" : false,
+		"drawUnblankQuad" : true,
+		"edgeSharpness" : 1.25,
+		"enableAchromaticDistortion" : true,
+		"enableHmdLatencyHidingDisplayOffset" : true,
+		"enableHomeApp" : false,
+		"enableLinuxVulkanAsync" : true,
+		"enablePerAppFPS" : true,
+		"enableScanoutScaling" : true,
+		"enableSimplifiedShaders" : true,
+		"environmentMode" : 1,
+		"fadeSharpness" : 0.75,
+		"floorColor" : "#bababa",
+		"floorDetectAtStart" : false,
+		"floorReflection" : "reflections/skydome_blue.png",
+		"forceSceneTextureIndexZero" : false,
+		"forcedDriver" : "monado",
+		"fvtaa" : true,
+		"gridColor" : "#222266",
+		"laserMouseAutoHideTimeout" : 7.0,
+		"motionSmoothing" : false,
+		"omitDesktopWebhelpers" : true,
+		"overlayMipbias" : -0.2,
+		"overlayMips" : 1,
+		"overlayRenderQuality_2" : 1,
+		"panelMask" : false,
+		"perfCriteriaCompositorGpuBudget" : 2,
+		"perfCriteriaDesiredFrameRate" : 72,
+		"perfCriteriaFrametimeFilterLength" : 216,
+		"perfCriteriaFrametimePercentile" : 90,
+		"perfCriteriaPlayableAllowReprojectionWithAppDepthOnly" : true,
+		"perfCriteriaPlayableAllowReprojectionWithAppMotionVectors" : false,
+		"perfCriteriaReprojectionPercentile" : 90,
+		"perfCriteriaResolutionPlayable" : 0,
+		"perfCriteriaResolutionVerified" : 1728,
+		"playAreaColor" : "#00000000",
+		"promptForChaperoneAtGameLaunch" : true,
+		"recommendedResolutionMultiplierMax" : 2.5,
+		"recommendedResolutionMultiplierMin" : 0.45,
+		"renderSystemLayerInDistortPass" : true,
+		"renderSystemLayerInDistortPassMSAA" : "3",
+		"requireChaperoneAtGameLaunch" : false,
+		"requireHmd" : true,
+		"sharpening" : true,
+		"sharpeningAlpha" : 0.75,
+		"showDashboardSettings" : true,
+		"showGridCircles" : false,
+		"showRecommendedResolutionPercentage" : false,
+		"showSkydome" : true,
+		"showStage" : false,
+		"startColor" : "#090625",
+		"startMonitorFromAppLaunch" : false,
+		"systemLayerHeight" : 1400,
+		"systemLayerWidth" : 1400,
+		"tesselationDebug" : false,
+		"trackingLossColor" : "#181C35",
+		"unifiedPerAppRefreshRateAndThrottling" : true,
+		"useFacetRenderer" : true,
+		"waitForSceneGraph" : true
+	},
+	"tessellation" : {
+		"laser_pointer.z" : 0.05,
+		"map_streets" : 0.333,
+		"unit_cube.x" : 0.025,
+		"unit_cube.y" : 0.025,
+		"unit_cylinder" : 0.1,
+		"unit_dist" : 0.1,
+		"unit_sphere" : 0.1,
+		"unit_square" : 0.1
+	},
+	"version" : "1"
+}

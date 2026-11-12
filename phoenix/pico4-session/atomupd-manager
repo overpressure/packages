@@ -1,0 +1,28 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# Stands in for SteamOS's atomupd-manager (docs/session.md#the-steam-client).
+#
+# The Steam client asks Valve's steamos-select-branch and steamos-update which OS branch the
+# system tracks and whether an update is waiting; both scripts call atomupd-manager, the client
+# of the A/B image updater (atomupd-daemon). That updater writes the Frame's own system images
+# and must never run here: the PICO 4 system is updated by installing a new image. This
+# answers the queries the way atomupd-manager does for an up-to-date system and refuses the
+# commands that would change it.
+set -euo pipefail
+
+refuse() {
+	echo "The PICO 4 system is updated by installing a new image, not through SteamOS's updater." >&2
+	exit 1
+}
+
+case "${1:-}" in
+	tracked-branch) echo stable ;;
+	list-branches) echo stable ;;
+	check) echo "No update available" ;;
+	get-update-status) echo idle ;;
+	switch-branch | update | cancel | pause | resume) refuse ;;
+	*)
+		echo "Usage: atomupd-manager tracked-branch|list-branches|check|get-update-status" >&2
+		exit 2
+		;;
+esac

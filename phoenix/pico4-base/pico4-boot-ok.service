@@ -1,0 +1,12 @@
+# The graphical target was reached: the boot counts as finished, and preinit's count of unfinished
+# boots starts again (docs/install.md, "Boot attempts").
+[Unit]
+Description=PICO 4 boot finished: clear the count of unfinished boots
+After=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/pico4/boot-attempts finished
+
+[Install]
+WantedBy=graphical.target

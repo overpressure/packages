@@ -1,0 +1,44 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# Bring the LPASS VA macro up once PICO OS's audio process runs. Its probe
+# votes the LPASS hardware through the AFE, which refuses the vote until the audio process
+# (audiopd) is up; a probe before that fails for good rather than deferring, and the driver has no
+# bind file: the platform bus probes it again (drivers_probe). The other macros, the SoundWire
+# buses and the card wait for the VA macro and follow it, so the card is what this waits for.
+# While a probe runs, the device already shows its driver: only an unbound macro is probed again.
+# PICO OS's calibration (q6calibration-pico4.c) has the same order: the ADSP maps its buffer only
+# once the audio process runs, so with the card up it is probed again too.
+. /usr/libexec/pico4/lib.sh
+set -u
+DEV=3370000.codec
+CARD=/proc/asound/PICO4
+
+calibration() {
+	local dev _
+	for dev in /sys/bus/platform/devices/*:calibration; do
+		[ -e "$dev" ] || return 0
+		# The ADSP refuses the map for a while after the card is up, for longer on some boots.
+		for _ in $(seq 1 30); do
+			[ -e "$dev/driver" ] && break
+			echo "${dev##*/}" > /sys/bus/platform/drivers_probe 2> /dev/null || true
+			sleep 2
+		done
+		if [ -e "$dev/driver" ]; then log "lpass-macros: calibration loaded"; else log "lpass-macros: no calibration"; fi
+	done
+}
+
+# A refused vote takes the AFE's 3 s timeout: about two minutes in all. The card is looked for
+# every 0.25 s (it follows the macro's probe within moments), the macro probed every 2 s.
+for _ in $(seq 1 40); do
+	[ -e "/sys/bus/platform/devices/$DEV/driver" ] || echo "$DEV" > /sys/bus/platform/drivers_probe 2> /dev/null || true
+	for _ in 1 2 3 4 5 6 7 8; do
+		if [ -e "$CARD" ]; then
+			log "lpass-macros: sound card up"
+			calibration
+			exit 0
+		fi
+		sleep 0.25
+	done
+done
+log "lpass-macros: no sound card"
+exit 1

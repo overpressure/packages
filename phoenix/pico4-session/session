@@ -1,0 +1,33 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# The steamos user's session (docs/session.md). pico4-session.service runs this
+# inside a logind session; the user manager starts Valve's session target
+# (deckard-steamvr-session), gamescope-session.target unless session.conf names another:
+# SteamVR with driver_monado, gamescope on SteamVR's OpenVR overlays.
+set -euo pipefail
+runtime=${XDG_RUNTIME_DIR:?not inside a logind session}
+target=${PICO4_SESSION_TARGET:-gamescope-session.target}
+[ -x /usr/bin/start-gamescope-session ] || { echo "deckard-steamvr-session is not installed" >&2; exit 1; }
+
+# logind starts the user manager with the session; wait until it listens.
+for _ in $(seq 100); do
+	[ -S "$runtime/systemd/private" ] && break
+	sleep 0.1
+done
+[ -S "$runtime/systemd/private" ] || { echo "the user manager did not start" >&2; exit 1; }
+# A new session starts with clean counters: the user manager outlives the session, and
+# SteamVR's start limit (50-pico4-restart-limit.conf) is for crash loops within one session,
+# not for sessions started one after another. The session before may still be stopping
+# SteamVR (its compositor crashes on the way out); reset only once that is over,
+# or the end of that stop still counts against this session and its first start hits the limit.
+for _ in $(seq 300); do
+	case "$(systemctl --user is-active steamvr.service 2>/dev/null)" in
+	deactivating | activating | reloading) sleep 0.1 ;;
+	*) break ;;
+	esac
+done
+systemctl --user reset-failed
+
+# SteamVR is the OpenXR runtime (its first start links it into the user's ~/.config/openxr)
+# and its driver_monado owns the hardware.
+exec /usr/bin/start-gamescope-session "$target"

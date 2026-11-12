@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
+"""The PICO 4's lens separation: read it, or move the lenses as PICO OS's gd32ipdservice does.
+
+The lens motor hangs off the GD32 MCU on /dev/ttyHS1, which also runs the fan and takes firmware
+updates. This tool can only build the frames listed here: the position and move-state queries, the
+timestamp report's switch (always off) and a move within the headset's range. A running session
+follows the position (docs/xr.md#lens-distortion-and-ipd).
+
+    pico4-lens              the separation in mm
+    pico4-lens set 63.5     move the lenses there, wait until they stop
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+DEVICE = "/dev/ttyHS1"
+REQUEST, REPLY = 0xA0, 0x79
+GET_POSITION, GET_MOVE_STATE, MOVE, REPORT_ENABLE = 0x08, 0x11, 0x07, 0x22
+MOVING = 1
+# 0.01 mm: the PICO 4's specified range. Below it PICO OS asks to accept the risk of the lenses
+# pressing on the nose, and the motor stops by itself at 59.4-59.9 mm.
+MIN_POSITION, MAX_POSITION = 6200, 7200
+TOLERANCE = 30  # 0.01 mm between the target and where a finished move ended
+LOCK_TIMEOUT, REPLY_TIMEOUT, MOVE_TIMEOUT = 1.0, 0.2, 15.0
+#: Reply lengths: 79 a_lo a_hi b_lo b_hi xor for the position, 79 state xor for the move state.
+POSITION_REPLY, STATE_REPLY = 6, 3
+#: 0.01 mm: a position reply's separation, told apart from the Hall reading by this range.
+SEPARATION_MIN, SEPARATION_MAX = 5700, 7300
+
+
+def xor(data: bytes) -> int:
+    """Return the XOR of the bytes: the frames' checksum."""
+    x = 0
+    for b in data:
+        x ^= b
+    return x
+
+
+def frame(command: int, position: int | None = None) -> bytes:
+    """Build a request; only the two queries, the report's switch off and a move can be built."""
+    if command in (GET_POSITION, GET_MOVE_STATE, REPORT_ENABLE) and position is None:
+        body = bytes((REQUEST, command, 0, 0, 0))
+    elif command == MOVE and type(position) is int and MIN_POSITION <= position <= MAX_POSITION:
+        body = bytes((REQUEST, command, 0, position & 0xFF, position >> 8))
+    else:
+        msg = f"command {command:#04x} ({position!r}) is not allowed"
+        raise ValueError(msg)
+    return body + bytes((xor(body),))
+
+
+def parse_position(reply: bytes) -> int:
+    """79 a_lo a_hi b_lo b_hi xor: the separation and the Hall reading, told apart by range."""
+    if len(reply) < POSITION_REPLY or reply[0] != REPLY or xor(reply[:5]) != reply[5]:
+        msg = f"position reply {reply.hex()}"
+        raise ValueError(msg)
+    for value in (reply[1] | reply[2] << 8, reply[3] | reply[4] << 8):
+        if SEPARATION_MIN <= value <= SEPARATION_MAX:
+            return value
+    msg = f"position reply {reply.hex()}"
+    raise ValueError(msg)
+
+
+def parse_state(reply: bytes) -> int:
+    """79 state xor; stock counts anything else as no answer."""
+    if len(reply) < STATE_REPLY or reply[0] != REPLY or reply[0] ^ reply[1] != reply[2]:
+        msg = f"move state reply {reply.hex()}"
+        raise ValueError(msg)
+    return reply[1]
+
+
+class Port:
+    """One transaction at a time under the flock that pico4-fan and the driver hold too."""
+
+    def __init__(self, device: str = DEVICE) -> None:
+        """Talk to the MCU on this serial device; nothing is opened until a transaction."""
+        self.device = device
+
+    def __call__(self, tx: bytes, length: int) -> bytes:
+        """Send one frame and return the first reply of this length, holding the port's flock."""
+        import fcntl  # noqa: PLC0415  # POSIX only: the host tests load this program on Windows too
+        import termios  # noqa: PLC0415  # POSIX only, as fcntl
+
+        fd = os.open(self.device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK | os.O_CLOEXEC)
+        try:
+            deadline = time.monotonic() + LOCK_TIMEOUT
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() > deadline:
+                        msg = f"{self.device} stays locked"
+                        raise TimeoutError(msg) from None
+                    time.sleep(0.005)
+            attrs = termios.tcgetattr(fd)
+            attrs[0] = attrs[1] = attrs[3] = 0
+            attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+            attrs[4] = attrs[5] = termios.B115200
+            attrs[6][termios.VMIN], attrs[6][termios.VTIME] = 0, 0
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+            termios.tcflush(fd, termios.TCIOFLUSH)
+            if os.write(fd, tx) != len(tx):
+                msg = f"short write to {self.device}"
+                raise OSError(msg)
+            data = b""
+            deadline = time.monotonic() + REPLY_TIMEOUT
+            while time.monotonic() < deadline:
+                time.sleep(0.002)
+                try:
+                    data += os.read(fd, 16)
+                except BlockingIOError:
+                    continue
+                marker = data.find(bytes((REPLY,)))
+                if marker >= 0 and len(data) - marker >= length:
+                    return data[marker : marker + length]
+            msg = f"no reply from the MCU to {tx.hex()}"
+            raise TimeoutError(msg)
+        finally:
+            os.close(fd)
+
+
+def position(port: Callable[[bytes, int], bytes]) -> int:
+    """Return the lens separation in 0.01 mm."""
+    return parse_position(port(frame(GET_POSITION), POSITION_REPLY))
+
+
+def move_state(port: Callable[[bytes, int], bytes]) -> int:
+    """Return the motor's state: MOVING while a move runs, 0 after a good one."""
+    return parse_state(port(frame(GET_MOVE_STATE), STATE_REPLY))
+
+
+def move(
+    port: Callable[[bytes, int], bytes],
+    target: int,
+    sleep: Callable[[float], object] = time.sleep,
+    now: Callable[[], float] = time.monotonic,
+) -> int:
+    """As SetIPDPosition without the timestamp report, then its thread's wait; the end position."""
+    frame_out = frame(MOVE, target)  # refuses a bad target before anything is sent
+    if move_state(port) == MOVING:
+        msg = "the lenses are still moving"
+        raise RuntimeError(msg)
+    port(frame(REPORT_ENABLE), 1)
+    port(frame_out, 1)
+    deadline = now() + MOVE_TIMEOUT
+    while True:
+        sleep(0.05)
+        state = move_state(port)
+        if state != MOVING:
+            break
+        if now() > deadline:
+            msg = "the lenses did not stop"
+            raise TimeoutError(msg)
+    end = position(port)
+    if state != 0 or abs(end - target) > TOLERANCE:
+        msg = f"move ended in state {state} at {end / 100:.2f} mm"
+        raise RuntimeError(msg)
+    return end
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Print the separation in mm, after a move with set."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command")
+    set_parser = sub.add_parser("set", help="move the lenses")
+    set_parser.add_argument("mm", type=float, help=f"{MIN_POSITION / 100:g} to {MAX_POSITION / 100:g}")
+    args = parser.parse_args(argv)
+    port = Port()
+    try:
+        end = move(port, round(args.mm * 100)) if args.command == "set" else position(port)
+    except (OSError, RuntimeError, ValueError) as e:
+        print(f"pico4-lens: {e}", file=sys.stderr)
+        return 1
+    print(f"{end / 100:.2f}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

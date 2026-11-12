@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
+"""How far the tracker's pose moves with the headset lying still (docs/release-checklist.md).
+
+    pico4-still-gate [SECONDS]    with a session up for about 2 minutes, reads the pose ring of /dev/shm/pico4-slam
+
+Compare with the previous release's numbers: a tracking change is judged against the old driver.
+"""
+
+from __future__ import annotations
+
+import math
+import mmap
+import struct
+import sys
+import time
+from pathlib import Path
+from typing import Callable
+
+#: The shared memory the tracker's feed writes (pico4_slam_feed.h), a fixed name.
+FEED = Path("/dev/shm/pico4-slam")  # noqa: S108  # the feed's fixed shared-memory name, not a temporary file
+
+#: The pose ring in pico4_slam_feed.h: after the header and the frame ring.
+POSES = 192 + 40 * 8192
+POSE_SIZE = 136
+POSE_COUNT = 4096
+
+
+def measure(
+    memory: mmap.mmap | bytearray,
+    seconds: float,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], object] = time.sleep,
+) -> tuple[int, int, float, float, int]:
+    """Return poses, lost poses, furthest distance from the first (m), furthest angle (degrees), longest gap (ns)."""
+    written = struct.unpack_from("<Q", memory, 32)[0]
+    read = written
+    first = None
+    furthest = angle = 0.0
+    count = lost = gap = 0
+    last = None
+    end = clock() + seconds
+    while clock() < end:
+        written = struct.unpack_from("<Q", memory, 32)[0]
+        if written - read > POSE_COUNT - 8:
+            read = written - POSE_COUNT + 8
+        while read < written:
+            at = POSES + POSE_SIZE * (read % POSE_COUNT)
+            stamp = struct.unpack_from("<q", memory, at)[0]
+            position = struct.unpack_from("<3d", memory, at + 8)
+            orientation = struct.unpack_from("<4d", memory, at + 32)
+            confidence = struct.unpack_from("<I", memory, at + 112)[0]
+            if last is not None:
+                gap = max(gap, stamp - last)
+            last = stamp
+            count += 1
+            lost += confidence == 0
+            if first is None:
+                first = (position, orientation)
+            furthest = max(furthest, math.dist(position, first[0]))
+            dot = abs(sum(a * b for a, b in zip(orientation, first[1])))
+            angle = max(angle, 2 * math.degrees(math.acos(min(1, dot))))
+            read += 1
+        sleep(0.02)
+    return count, lost, furthest, angle, gap
+
+
+def main(argv: list[str]) -> int:
+    """Measure for SECONDS (60 by default) and print one line; exit status 1 without a pose."""
+    seconds = float(argv[0]) if argv else 60
+    with FEED.open("rb") as file:
+        memory = mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ)
+        count, lost, furthest, angle, gap = measure(memory, seconds)
+    print(
+        f"{count} poses, {lost} lost, furthest {furthest * 1000:.2f} mm, {angle:.3f} deg, "
+        f"longest gap {gap / 1e6:.1f} ms"
+    )
+    return 0 if count else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

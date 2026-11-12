@@ -1,0 +1,67 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# PICO OS's CPU limits while a VR session runs (docs/cooling.md#vr-cpu-limits), run by
+# pico4-vr-performance.service as root. While a VR app runs, PICO OS's qvrservice holds one
+# power hint for every CPU and GPU level (qvrservice_config.txt performance_perf_hints ->
+# powerhint.xml 0x130A-0x1312); its CPU part: frequency limits (big cores 864-2016 MHz, little
+# 576-1804 MHz, prime 941-2054 MHz) and a minimum of online cores (3 big, 1 prime).
+#
+#   vr-performance on|off
+#
+# "on" saves the current limits and applies the hint's; "off" puts the saved ones back.
+#
+# The frequency limits go to the cpufreq policies (policy0 the little cores, policy4 the big ones, policy7 the prime core), and
+# every core stays online, which meets core_ctl's minimum. The big cores, where the compositor runs,
+# stay at their limit (governor performance): on schedutil each frame starts with a frequency ramp,
+# and a frame with Steam's panel redrawing has no time for it (docs/session.md).
+# PICO4_SYSFS and PICO4_VR_PERFORMANCE_STATE replace /sys and the state file for tests.
+set -euo pipefail
+S=${PICO4_SYSFS:-/sys}
+STATE=${PICO4_VR_PERFORMANCE_STATE:-/run/pico4/vr-performance}
+CPU=$S/devices/system/cpu
+# The hint's limits in kHz: policy:minimum:maximum; the little cores' maximum is theirs.
+POLICIES="0:576000: 4:864000:2016000 7:941000:2054000"
+limits() {
+	local entry policy min max
+	case $1 in
+	on)
+		if [[ ! -s $STATE ]]; then
+			mkdir -p "$(dirname "$STATE")"
+			for entry in $POLICIES; do
+				policy=${entry%%:*}
+				echo "policy$policy=$(cat "$CPU/cpufreq/policy$policy/scaling_min_freq"):$(cat "$CPU/cpufreq/policy$policy/scaling_max_freq")"
+			done > "$STATE.new"
+			echo "governor=$(cat "$CPU/cpufreq/policy4/scaling_governor")" >> "$STATE.new"
+			mv "$STATE.new" "$STATE"
+		fi
+		for entry in $POLICIES; do
+			IFS=: read -r policy min max <<< "$entry"
+			# The maximum first where it drops, the minimum first where it rises: never min > max.
+			[[ -z $max ]] || echo "$max" > "$CPU/cpufreq/policy$policy/scaling_max_freq"
+			echo "$min" > "$CPU/cpufreq/policy$policy/scaling_min_freq"
+		done
+		echo performance > "$CPU/cpufreq/policy4/scaling_governor"
+		;;
+	off)
+		[[ -s $STATE ]] || return 0
+		while IFS='=' read -r key value; do
+			if [[ $key == governor ]]; then
+				echo "$value" > "$CPU/cpufreq/policy4/scaling_governor"
+				continue
+			fi
+			min=${value%%:*} max=${value#*:}
+			echo "$max" > "$CPU/cpufreq/$key/scaling_max_freq"
+			echo "$min" > "$CPU/cpufreq/$key/scaling_min_freq"
+		done < "$STATE"
+		rm -f "$STATE"
+		;;
+	esac
+}
+
+case "${1:-}" in
+on | off) limits "$1" ;;
+*)
+	echo "usage: vr-performance on|off" >&2
+	exit 2
+	;;
+esac

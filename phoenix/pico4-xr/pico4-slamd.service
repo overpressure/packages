@@ -1,0 +1,20 @@
+# PICO OS's head tracker for the PICO 4 driver (docs/xr.md#head-tracking): pico4-slamd in the
+# tracker's root, through /dev/shm/pico4-slam (group video, which the session user and the
+# Monado service can use). Valve's session and Monado want it. Each driver start gets a new
+# tracker: pico4-slamd then exits and comes back.
+[Unit]
+Description=PICO OS's head tracker (pico4-slamd)
+ConditionPathExists=/usr/lib/pico4-stock-slam/pico4/pico4-slamd
+# PICO OS's FastRPC speaks ION and adsprpc nodes: stock-slam preloads the FastRPC bridge onto
+# upstream FastRPC (docs/xr.md#head-tracking).
+ConditionPathExists=/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge.so
+Requires=pico4-cdsprpcd.service
+After=pico4-cdsprpcd.service
+
+[Service]
+ExecStart=/bin/sh -c 'exec /usr/libexec/pico4/stock-slam /pico4/pico4-slamd "$(getent group video | cut -d: -f3)"'
+Restart=always
+RestartSec=1
+# As PICO OS's init runs its core services, pvrtrackingservice among them: never the OOM
+# killer's choice (docs/userspace.md#memory).
+OOMScoreAdjust=-1000

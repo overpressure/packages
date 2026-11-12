@@ -1,0 +1,3 @@
+# Overrides systemd's rule of the same name: no v4l_id probing of video nodes. Opening a tracking
+# camera's node stops head tracking (docs/session.md#steam-link). The persistent /dev/v4l links
+# this rule would create are not needed.

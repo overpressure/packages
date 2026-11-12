@@ -1,0 +1,17 @@
+# The USB link to the PC: network, log drive and serial function (docs/install.md). The Frame's
+# own gadget units stay masked; this gadget is the one the maintenance stage 1 sets up too.
+[Unit]
+Description=USB link to the PC
+DefaultDependencies=no
+Wants=sys-kernel-config.mount
+After=sys-kernel-config.mount systemd-tmpfiles-setup-dev.service
+Before=sysinit.target network-pre.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/usb-gadget
+
+[Install]
+WantedBy=sysinit.target

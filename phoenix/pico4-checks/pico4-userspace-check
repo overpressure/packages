@@ -1,0 +1,305 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# Acceptance check for the SteamOS-compatible userspace on the PICO 4
+# (roadmap step 4). Prints one JSON object; exit status 0 only if it passed.
+#
+#   pico4-userspace-check [--wait SECONDS] [--no-vulkan]
+#
+# Validated on the host by devices/phoenix/tooling/userspace.py (validate_check).
+set -u
+wait_s=180
+vulkan=1
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--wait) wait_s=$2; shift ;;
+	--no-vulkan) vulkan=0 ;;
+	*) echo "usage: $0 [--wait SECONDS] [--no-vulkan]" >&2; exit 2 ;;
+	esac
+	shift
+done
+
+json_str() {
+	local s=${1//\\/\\\\}
+	s=${s//\"/\\\"}
+	s=${s//$'\n'/\\n}
+	s=${s//$'\t'/ }
+	printf '"%s"' "$s"
+}
+json_list() {
+	local first=1 item
+	printf '['
+	while IFS= read -r item; do
+		[ -n "$item" ] || continue
+		[ $first = 1 ] || printf ','
+		json_str "$item"
+		first=0
+	done
+	printf ']'
+}
+bool() { if "$@" >/dev/null 2>&1; then echo true; else echo false; fi; }
+
+errors=()
+need() { # need DESCRIPTION COMMAND...: record a failed requirement
+	local what=$1
+	shift
+	"$@" >/dev/null 2>&1 || errors+=("$what")
+}
+
+# -- systemd ---------------------------------------------------------------
+pid1=$(readlink /proc/1/exe)
+state=$(timeout "$wait_s" systemctl is-system-running --wait 2>/dev/null)
+[ -n "$state" ] || state=$(systemctl is-system-running 2>/dev/null)
+failed=$(systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}')
+sd_version=$(systemctl --version 2>/dev/null | sed -n '1s/^systemd \([0-9.]*\).*/\1/p')
+taint=$(systemctl show --property=Tainted --value 2>/dev/null)
+need "PID 1 is systemd" [ "$pid1" = /usr/lib/systemd/systemd ]
+need "systemd 257 (the Frame's version)" [ "${sd_version%%.*}" = 257 ]
+need "system state running (is: $state)" [ "$state" = running ]
+need "no failed units" [ -z "$failed" ]
+
+# -- /dev ---------------------------------------------------------------------
+dev_fs=$(findmnt -no FSTYPE /dev 2>/dev/null)
+missing_nodes=$(
+	for u in /sys/dev/char/*/uevent /sys/dev/block/*/uevent; do
+		name=$(sed -n 's/^DEVNAME=//p' "$u" 2>/dev/null)
+		[ -n "$name" ] || continue
+		[ -e "/dev/$name" ] || echo "$name"
+	done
+)
+udev_devices=$(udevadm info --export-db 2>/dev/null | grep -c '^P:')
+# Stage 1 hands over the kernel's devtmpfs.
+need "/dev is the kernel's devtmpfs" [ "$dev_fs" = devtmpfs ]
+need "every kernel device has a node" [ -z "$missing_nodes" ]
+need "udev database populated" [ "${udev_devices:-0}" -gt 0 ]
+
+# -- storage policy ------------------------------------------------------------
+writable=$(
+	for d in /sys/class/block/*; do
+		n=${d##*/}
+		case "$n" in loop* | ram* | zram* | dm-* | nbd*) continue ;; esac
+		[ "$(cat "$d/ro" 2>/dev/null)" = 1 ] || echo "$n"
+	done
+)
+root_src=$(findmnt -no SOURCE /)
+# The partition of a GPT name.
+part_dev() {
+	local d
+	for d in /sys/class/block/*; do
+		grep -qx "PARTNAME=$1" "$d/uevent" 2>/dev/null && echo "/dev/${d##*/}"
+	done
+}
+installed=false
+system_dev=$(part_dev super)
+data_dev=$(part_dev userdata)
+# The image in super read-only, data on userdata, the only writable partition.
+[ -n "$system_dev" ] && [ "$root_src" = "$system_dev" ] && installed=true
+need "root is the system image in super (is: $root_src)" [ "$installed" = true ]
+# The kernel counts a disk's read-only flag for its partitions too, so preinit makes
+# userdata's disk writable; its other partitions keep their own flags and are checked here.
+data_disk=$(basename "$(readlink -f "/sys/class/block/${data_dev##*/}/..")")
+writable=$(grep -vx -e "${data_dev##*/}" -e "$data_disk" <<<"$writable")
+need "every physical block device but userdata read-only" [ -z "$writable" ]
+# Read-only under the mounted file system, its writeback fails and data is lost.
+need "userdata writable" [ "$(cat "/sys/class/block/${data_dev##*/}/ro" 2>/dev/null)" = 0 ]
+need "system image mounted read-only" sh -c "findmnt -no OPTIONS / | grep -q '^ro,'"
+need "data on userdata" [ "$(findmnt -no SOURCE /data)" = "$data_dev" ]
+
+# -- services and SteamOS userspace -------------------------------------------
+seats=$(loginctl list-seats --no-legend 2>/dev/null | awk '{print $1}')
+need "D-Bus system bus" busctl --system status
+need "logind seat0" grep -qx seat0 <<<"$seats"
+need "sshd active" systemctl is-active --quiet sshd.service
+# The USB link to the PC as pico4-usb-gadget set it up (the PC's ARP entry and DHCP lease
+# point at this name, MAC and address).
+link_status=absent
+link_now=""
+if [ -s /run/pico4/usb-link.env ]; then
+	IFACE="" MAC="" IP=""
+	. /run/pico4/usb-link.env
+	link_now="$IFACE $(cat "/sys/class/net/$IFACE/address" 2>/dev/null) $(cat "/sys/class/net/$IFACE/operstate" 2>/dev/null)"
+	link_now+=" $(ip -4 -o addr show dev "$IFACE" 2>/dev/null | awk '{print $4}' | tr '\n' ' ')"
+	link_status=up
+	[ -e "/sys/class/net/$IFACE" ] || link_status="interface $IFACE missing: $(ls /sys/class/net | tr '\n' ' ')"
+	[ "$link_status" = up ] && [ "$(cat "/sys/class/net/$IFACE/address")" != "$MAC" ] && link_status="MAC is not $MAC"
+	[ "$link_status" = up ] && ! grep -qw "$IP/24" <<<"$link_now" && link_status="address $IP missing"
+	[ "$link_status" = up ] && grep -qw down <<<"$link_now" && link_status="link down"
+fi
+need "USB link up ($link_status)" [ "$link_status" = up ]
+# The USB mass-storage thread serves the log drive; losing it resets the PC's view of the device.
+if [ -d /sys/kernel/config/usb_gadget/pico4/functions/mass_storage.0 ]; then
+	need "USB mass-storage thread alive" grep -qx file-storage /proc/[0-9]*/comm
+fi
+# -- the session user (docs/session.md) ------------------------------------------
+# pico4-session.service logs steamos in through PAM and its user manager starts
+# Valve's session target; the target takes a moment after the system is up. The
+# Monado service (a development runtime, not part of the session) is only reported.
+session_user=steamos
+session_target=gamescope-session.target
+[ ! -s /etc/pico4/session.conf ] || . /etc/pico4/session.conf
+[ -z "${PICO4_SESSION_TARGET:-}" ] || session_target=$PICO4_SESSION_TARGET
+session_uid=$(id -u "$session_user" 2>/dev/null)
+user_systemctl() { # the session user's own manager
+	runuser -u "$session_user" -- env "XDG_RUNTIME_DIR=/run/user/$session_uid" 		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$session_uid/bus" systemctl --user "$@"
+}
+session_service=$(systemctl is-active pico4-session.service 2>/dev/null)
+# Before the first-run setup is finished or skipped, steam.service waits for it
+# (wait-first-run) and the target cannot become active: the setup's session is
+# SteamVR, gamescope and the setup's panel (docs/session.md#first-run-setup).
+session_home=$(getent passwd "$session_user" | cut -d: -f6)
+first_run_pending() { [ -n "$session_home" ] && HOME=$session_home /usr/libexec/pico4/wait-first-run --pending; }
+setup_session() { # the setup's units, active or not, one per line
+	for unit in steamvr.service gamescope-session.service pico4-onboarding.service; do
+		user_systemctl is-active "$unit" 2>/dev/null
+	done
+}
+session_target_state=unknown
+first_run="done"
+setup_states=""
+for _ in $(seq 60); do
+	session_target_state=$(user_systemctl is-active "$session_target" 2>/dev/null)
+	[ "$session_target_state" != active ] || break
+	if [ "$session_target" = gamescope-session.target ] && first_run_pending; then
+		first_run=pending
+		setup_states=$(setup_session)
+		[ "$(grep -cx active <<<"$setup_states")" != 3 ] || break
+	else
+		first_run="done"
+	fi
+	sleep 1
+done
+# The target came up during the wait: the setup is over.
+[ "$session_target_state" != active ] || first_run="done"
+session_user_state=$(loginctl show-user "$session_user" -p State --value 2>/dev/null)
+session_failed=$(user_systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}')
+# Device nodes the session user needs in Valve's session (SteamVR's
+# driver_monado and compositor run as steamos).
+access_denied=$(
+	for node in /dev/dri/card0 /dev/spidev0.0 /dev/ttyHS1 /dev/media0 /dev/video0; do
+		[ -e "$node" ] || continue
+		runuser -u "$session_user" -- test -r "$node" -a -w "$node" 2>/dev/null || echo "$node"
+	done
+)
+monado_socket=$(systemctl is-active pico4-monado.socket 2>/dev/null)
+monado_service=$(systemctl is-active pico4-monado.service 2>/dev/null)
+# Valve's session runs where the GPU is (pico4-session.service).
+if [ -e /dev/dri/renderD128 ]; then
+	need "session service active (is: $session_service)" [ "$session_service" = active ]
+	need "session user logged in (is: $session_user_state)" [ "$session_user_state" = active ]
+	if [ "$first_run" = pending ]; then
+		need "first-run setup's session active (steamvr, gamescope, setup panel: $(paste -sd' ' <<<"$setup_states"))" \
+			[ "$(grep -cx active <<<"$setup_states")" = 3 ]
+	else
+		need "session target $session_target active (is: $session_target_state)" [ "$session_target_state" = active ]
+	fi
+fi
+
+# -- the fan (docs/cooling.md) ---------------------------------------------------
+# pico4-fan.service runs where the lens MCU's UART exists and
+# writes its state every second. The MCU must have acknowledged a duty and
+# answer without an error: a session must not run without cooling.
+fan_service=skipped
+fan_state=null
+fan_mcu=
+if [ -e /sys/class/tty/ttyHS1 ]; then
+	fan_service=$(systemctl is-active pico4-fan.service 2>/dev/null)
+	for _ in $(seq 10); do
+		fan_state=$(pico4-fan state 2>/dev/null)
+		if grep -q '^{' <<<"$fan_state"; then
+			# Empty once the MCU acknowledged a duty and reports no error.
+			fan_mcu=$(python3 -c 'import json, sys
+s = json.loads(sys.argv[1])
+if s.get("error"):
+    print(s["error"])
+elif not isinstance(s.get("duty"), int):
+    print("no duty acknowledged yet")' "$fan_state" 2>&1)
+			[ -z "$fan_mcu" ] && break
+		else
+			fan_state=null
+		fi
+		sleep 1
+	done
+	need "fan service active (is: $fan_service)" [ "$fan_service" = active ]
+	need "fan daemon writes its state" [ "$fan_state" != null ]
+	[ "$fan_state" = null ] || need "MCU acknowledges the fan duty ($fan_mcu)" [ -z "$fan_mcu" ]
+fi
+# -- power: the charger's input and the battery (docs/development.md) -----------
+# Reported, not required: the host warns when a tethered headset drains its battery.
+psv() { cat "/sys/class/power_supply/$1/$2" 2>/dev/null; }
+num() { if [[ ${1:-} =~ ^-?[0-9]+$ ]]; then echo "$1"; else echo null; fi; }
+milli() { local v; v=$(num "${1:-}"); [ "$v" = null ] && echo null || echo $((v / 1000)); }
+usb_online=$(psv usb online)
+usb_port=$(psv usb real_type)
+usb_input_ma=$(milli "$(psv usb input_current_settled)")
+usb_input_now_ma=$(milli "$(psv usb input_current_now)")
+usb_limited=$(num "$(psv battery input_current_limited)")
+usb_mv=$(milli "$(psv usb voltage_now)")
+battery_status=$(psv battery status)
+battery_capacity=$(num "$(psv battery capacity)")
+battery_ma=$(milli "$(psv battery current_now)")
+
+packages=$(pacman -Q 2>/dev/null | wc -l)
+pkg() { pacman -Q "$1" 2>/dev/null | awk '{print $2}'; }
+for p in steamos-customizations-deckard steamos-manager gamescope pipewire deckard-mesa-linux-aarch64; do
+	need "package $p installed" pacman -Q "$p"
+done
+os_id=$(. /etc/os-release && echo "${ID:-}")
+os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-}")
+
+# -- Access (docs/security.md) --------------------------------------------------
+sshd_settings=$(sshd -T 2>/dev/null)
+for setting in "passwordauthentication no" "permitemptypasswords no" "kbdinteractiveauthentication no"; do
+	need "sshd: $setting" grep -qx "$setting" <<<"$sshd_settings"
+done
+# OpenSSH 10 prints prohibit-password, older versions its synonym without-password.
+need "sshd: permitrootlogin prohibit-password" grep -qxE "permitrootlogin (prohibit|without)-password" <<<"$sshd_settings"
+for account in root steamos; do
+	need "no password on $account" [ "$(getent shadow "$account" | cut -d: -f2)" = '*' ]
+done
+need "no unexpected network listener: $(pico4-listeners 2>/dev/null | grep -c UNEXPECTED)" pico4-listeners
+
+# -- Vulkan through Turnip (needs the GPU firmware from the stock firmware) ----
+vk_status=skipped
+vk_json=null
+if [ "$vulkan" = 1 ] && [ -c /dev/dri/renderD128 ]; then
+	if out=$(VK_DRIVER_FILES=/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json \
+		timeout 45 pico4-vulkan-test 2>/run/pico4-vulkan-test.log); then
+		vk_status=passed
+	else
+		vk_status=failed
+		errors+=("Turnip Vulkan test")
+	fi
+	vk_json=${out:-null}
+	grep -q '^{' <<<"$vk_json" || vk_json=null
+fi
+
+status=passed
+[ ${#errors[@]} = 0 ] || status=failed
+printf '{"schema":1,"status":%s' "$(json_str "$status")"
+printf ',"errors":%s' "$(printf '%s\n' "${errors[@]+"${errors[@]}"}" | json_list)"
+printf ',"kernel":%s,"os_id":%s,"os_name":%s' "$(json_str "$(uname -r)")" "$(json_str "$os_id")" "$(json_str "$os_name")"
+printf ',"systemd":{"pid1":%s,"version":%s,"state":%s,"failed_units":%s,"tainted":%s}' \
+	"$(json_str "$pid1")" "$(json_str "$sd_version")" "$(json_str "$state")" \
+	"$(json_list <<<"$failed")" "$(json_str "$taint")"
+printf ',"dev":{"fstype":%s,"missing_nodes":%s,"udev_devices":%s}' \
+	"$(json_str "$dev_fs")" "$(json_list <<<"$missing_nodes")" "${udev_devices:-0}"
+printf ',"storage":{"root":%s,"installed":%s,"writable_block_devices":%s}' "$(json_str "$root_src")" "$installed" \
+	"$(json_list <<<"$writable")"
+printf ',"usb_link":{"status":%s,"now":%s}' "$(json_str "$link_status")" "$(json_str "$link_now")"
+printf ',"seats":%s,"packages":%s' "$(json_list <<<"$seats")" "${packages:-0}"
+printf ',"session":{"user":%s,"user_state":%s,"service":%s,"target":%s,"target_state":%s,"failed_units":%s' \
+	"$(json_str "$session_user")" "$(json_str "$session_user_state")" "$(json_str "$session_service")" \
+	"$(json_str "$session_target")" "$(json_str "$session_target_state")" "$(json_list <<<"$session_failed")"
+printf ',"first_run":%s,"setup":%s' "$(json_str "$first_run")" "$(json_list <<<"$setup_states")"
+printf ',"monado_socket":%s,"monado_service":%s,"access_denied":%s}' "$(json_str "$monado_socket")" \
+	"$(json_str "$monado_service")" "$(json_list <<<"$access_denied")"
+printf ',"fan":{"service":%s,"state":%s}' "$(json_str "$fan_service")" "$fan_state"
+printf ',"power":{"usb_online":%s,"port":%s,"input_ma":%s,"input_now_ma":%s,"input_limited":%s,"usb_mv":%s,"battery":{"status":%s,"capacity":%s,"current_ma":%s}}' \
+	"$([ "$usb_online" = 1 ] && echo true || echo false)" "$(json_str "$usb_port")" "$usb_input_ma" \
+	"$usb_input_now_ma" "$usb_limited" "$usb_mv" \
+	"$(json_str "$battery_status")" "$battery_capacity" "$battery_ma"
+printf ',"versions":{"steamos-customizations-deckard":%s,"steamos-manager":%s,"gamescope":%s,"mesa":%s,"deckard-mesa-linux-aarch64":%s,"glibc":%s}' \
+	"$(json_str "$(pkg steamos-customizations-deckard)")" "$(json_str "$(pkg steamos-manager)")" \
+	"$(json_str "$(pkg gamescope)")" "$(json_str "$(pkg mesa)")" \
+	"$(json_str "$(pkg deckard-mesa-linux-aarch64)")" "$(json_str "$(pkg glibc)")"
+printf ',"vulkan":{"status":%s,"result":%s}}\n' "$(json_str "$vk_status")" "$vk_json"
+[ "$status" = passed ]

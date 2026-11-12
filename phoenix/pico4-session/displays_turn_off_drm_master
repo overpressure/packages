@@ -1,0 +1,6 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# Stands in for the Frame's deckard-hw-support tool, which steamvr.service
+# runs after SteamVR exits (ExecStopPost without "-": a missing program fails
+# the unit). On the PICO 4 the compositor releases the display itself.
+exit 0

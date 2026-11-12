@@ -1,0 +1,3 @@
+# The units pico4-checks starts with the system.
+enable pico4-userspace-logdisk.timer
+enable pico4-userspace-netdiag.service

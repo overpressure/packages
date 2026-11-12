@@ -1,0 +1,19 @@
+# The Frame's zram swap (holo-zram-swap: zram0 at half the RAM, lzo-rle; docs/userspace.md#memory).
+# zram-generator's own swap unit has no PICO OS priority, so its generator is masked and this
+# unit runs the same setup from the Frame's configuration, with the priority PICO OS's script uses.
+[Unit]
+Description=Swap on zram as on the Steam Frame
+DefaultDependencies=no
+Before=swap.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/systemd/system-generators/zram-generator --setup-device zram0
+ExecStart=/usr/bin/swapon --priority 32758 /dev/zram0
+ExecStop=/usr/bin/swapoff /dev/zram0
+ExecStop=/usr/lib/systemd/system-generators/zram-generator --reset-device zram0
+
+[Install]
+WantedBy=swap.target

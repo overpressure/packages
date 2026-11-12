@@ -1,0 +1,13 @@
+# PICO OS's CPU limits for VR (docs/cooling.md#vr-cpu-limits): held while
+# Valve's session or Monado runs, which both want this unit; it stops once
+# neither does.
+[Unit]
+Description=PICO OS's VR CPU frequency limits
+StopWhenUnneeded=yes
+ConditionPathExists=/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/vr-performance on
+ExecStop=/usr/libexec/pico4/vr-performance off

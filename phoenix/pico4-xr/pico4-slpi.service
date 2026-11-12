@@ -1,0 +1,13 @@
+[Unit]
+Description=Boot the sensor DSP (SLPI)
+ConditionPathExists=/usr/lib/firmware/slpi.mdt
+ConditionPathExists=/sys/class/remoteproc
+After= systemd-udev-trigger.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/remoteproc-boot slpi
+
+[Install]
+WantedBy=pico4-sensors.target

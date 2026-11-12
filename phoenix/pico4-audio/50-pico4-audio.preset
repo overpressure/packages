@@ -1,0 +1,2 @@
+# The units pico4-audio starts with the system.
+enable pico4-audio.target

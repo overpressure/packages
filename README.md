@@ -12,7 +12,7 @@ image, so that an image's build downloads them instead of compiling them.
 | --- | --- | --- |
 | `common/` | packages for Valve's Frame userspace on any headset: GTK 2, MangoHud, gamescope, PipeWire's ALSA plugin, libdisplay-info 0.1 | `overpressure-*` |
 | `sm8250/` | packages for the Snapdragon XR2 (SM8250): hexagonrpc, the DSPs' file server | `sm8250-*` |
-| `phoenix/` | packages for the PICO 4: Monado with the PICO 4's driver and its tools, Basalt with the PICO 4's settings, the compositor's swapchain layer, Steam Link's controller shim, the graphics test, fan control with the battery guard and the power key | `pico4-*` |
+| `phoenix/` | packages for the PICO 4: Monado with the PICO 4's driver and its tools, Basalt with the PICO 4's settings, the compositor's swapchain layer, Steam Link's controller shim, the graphics test, and the system around Valve's userspace with its tests: `pico4-base` (preinit, storage and recovery policy, USB link, network), `pico4-power` (fan, battery guard, power key), `pico4-audio`, `pico4-xr` (DSPs, IMU, station, lenses, cameras), `pico4-session` (Valve's session and SteamVR's settings), `pico4-checks` (the acceptance checks); each one's preset enables its units | `pico4-*` |
 | `headsets/<codename>/` | a headset's image definition: `layers`, `pacman.conf`, `packages.txt`, `packages.lock` | |
 | `build/packages.sh`, `build/plan.py` | the build of a headset's packages; the jobs and cache keys CI builds them with | |
 | `tests/` | the checks of the layout and of the build plan | |
@@ -62,7 +62,7 @@ From a checkout of overpressure, `python -m overpressure container run -- bash .
 
 ```sh
 python3 -m unittest -v      # the layout: layers, names, recipes' local sources, image definitions
-shellcheck build/*.sh
+python3 build/shellcheck.py   # every tracked shell script, the recipes' too, down to its warnings
 ```
 
 ## Releases

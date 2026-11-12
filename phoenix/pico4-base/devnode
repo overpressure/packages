@@ -1,0 +1,115 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# udev helper for block devices (00-pico4-devnodes.rules); the kernel's devtmpfs makes the nodes:
+#   devnode add     apply the storage policy to $DEVNAME
+#   devnode remove  delete its by-name links
+#   devnode sweep   apply the storage policy to every block device present
+#
+# Block devices are made read-only as soon as they appear, exactly like the
+# maintenance stage 1 does (pico4.rw=1 on the kernel command line disables
+# this), and get Android-style /dev/block/by-name/<PARTNAME> links. preinit runs
+# the sweep before it mounts anything. The one exception is the installed system's
+# data partition (userdata holding the pico4-data file system), which preinit makes
+# writable and mounts: set read-only under the mounted file system, its writeback
+# fails and data is lost.
+#
+# The sweep runs before the system's file systems are ready (preinit, then before
+# local-fs-pre.target), over about 120 devices: it reads sysfs with shell builtins,
+# links only what is not linked yet and switches every device in one blockdev call.
+set -u
+. /usr/libexec/pico4/lib.sh
+
+rw=0 installed=0
+read -r cmdline < /proc/cmdline
+for word in $cmdline; do
+	case "$word" in
+	pico4.rw | pico4.rw=1) rw=1 ;;
+	pico4.root=installed) installed=1 ;;
+	esac
+done
+
+to_ro=()
+data="" # the installed system's data partition, once found
+
+# partname NAME: REPLY is the device's PARTNAME (empty for a disk).
+partname() {
+	local key value
+	REPLY=""
+	while IFS='=' read -r key value; do
+		[ "$key" = PARTNAME ] && REPLY=$value
+	done < "/sys/class/block/$1/uevent"
+}
+
+# installed_data NAME PARTNAME: true for the installed system's data partition.
+installed_data() {
+	[ "$installed" = 1 ] && [ "$2" = userdata ] || return 1
+	[ "$data" = "$1" ] && return 0
+	[ "$(ext_label "/dev/$1" 2>/dev/null)" = pico4-data ] || return 1
+	data=$1
+}
+
+# installed_data_disk NAME: true for the disk of the installed system's data partition while it is
+# writable: the kernel counts a disk's read-only flag for its partitions too.
+installed_data_disk() {
+	local part ro
+	[ "$installed" = 1 ] && [ ! -e "/sys/class/block/$1/partition" ] || return 1
+	read -r ro < "/sys/class/block/$1/ro"
+	[ "$ro" = 0 ] || return 1
+	for part in "/sys/class/block/$1/$1"*; do
+		[ -e "$part/partition" ] || continue
+		partname "${part##*/}"
+		installed_data "${part##*/}" "$REPLY" && return 0
+	done
+	return 1
+}
+
+# block_policy NAME: queue the device for read-only and link it by name.
+block_policy() {
+	local name=$1 ro
+	case "$name" in loop* | ram* | zram* | dm-* | nbd*) return 0 ;; esac
+	[ -e "/sys/class/block/$name" ] || return 0
+	partname "$name"
+	local part=$REPLY
+	if [ "$rw" != 1 ] && ! installed_data "$name" "$part" && ! installed_data_disk "$name"; then
+		read -r ro < "/sys/class/block/$name/ro"
+		[ "$ro" = 1 ] || to_ro+=("/dev/$name")
+	fi
+	if [ -n "$part" ] && [ ! "/dev/block/by-name/$part" -ef "/dev/$name" ]; then
+		[ -d /dev/block/by-name ] || mkdir -p /dev/block/by-name
+		ln -sfn "../../$name" "/dev/block/by-name/$part"
+	fi
+}
+
+# apply: switch the queued devices read-only, all in one call; one by one only to name a failure.
+apply() {
+	local dev
+	[ ! -e /dev/block/bootdevice ] && [ -d /dev/block ] && ln -s . /dev/block/bootdevice
+	((${#to_ro[@]})) || return 0
+	blockdev --setro "${to_ro[@]}" 2>/dev/null && return 0
+	for dev in "${to_ro[@]}"; do
+		blockdev --setro "$dev" 2>/dev/null || log "could not set $dev read-only"
+	done
+}
+
+case "${1:-}" in
+add)
+	[ -n "${DEVNAME:-}" ] || exit 0
+	if [ "${ACTION:-add}" != change ]; then
+		block_policy "${DEVNAME#/dev/}"
+		apply
+	fi
+	;;
+remove)
+	[ -n "${DEVNAME:-}" ] || exit 0
+	for l in /dev/block/by-name/*; do
+		[ "$(readlink "$l")" = "../../${DEVNAME#/dev/}" ] && rm -f "$l"
+	done
+	;;
+sweep)
+	for d in /sys/class/block/*; do
+		[ -e "$d" ] && block_policy "${d##*/}"
+	done
+	apply
+	;;
+esac
+exit 0

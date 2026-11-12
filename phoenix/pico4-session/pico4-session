@@ -1,0 +1,7 @@
+# PAM stack of pico4-session.service (docs/session.md): systemd opens a logind
+# session for the steamos user here (no authentication: User= is fixed).
+# pam_env runs before pam_systemd so that the session gets class "user",
+# which a session without a terminal would not get by itself.
+account  include  system-login
+session  required pam_env.so conffile=/etc/pico4/session.pam-env readenv=0 user_readenv=0
+session  include  system-login

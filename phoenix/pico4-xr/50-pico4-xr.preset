@@ -1,0 +1,3 @@
+# The units pico4-xr starts with the system.
+enable pico4-sensors.target
+enable pico4-imu-ready.service

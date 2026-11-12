@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
+"""PICO OS's audio calibration (ACDB) as the file the kernel's q6 calibration driver loads.
+
+PICO OS's audio HAL reads the calibration database (vendor acdbdata, from the user's
+stock firmware at build time) and hands the blocks for each sound device to its kernel. This tool
+reads the same blocks for the two paths the system uses: the speakers (deep-buffer playback,
+acdb device 15) and the handset microphone (record, acdb device 4).
+
+  pico4-audiocal show [--acdb DIR]   the topologies and blocks, as JSON
+  pico4-audiocal export [--acdb DIR] [FILE]   the file the driver loads (at image build)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import struct
+import sys
+from pathlib import Path
+from typing import Any
+
+ACDB_DIR = "/usr/lib/pico4-audio/acdb"
+
+# ACDB property and table identifiers PICO OS's ACDB library looks up.
+PROP_ADM_TOPOLOGY = 0x113AD  # device: {app type, topology} pairs
+PROP_ASM_TOPOLOGY = 0x113AE  # global: {app type, topology} pairs
+PROP_AFE_TOPOLOGY = 0x13150  # device: the AFE topology
+PROP_INSTANCE_IDS = 0x1327F  # global: 1 when the instance tables apply
+PROP_CUSTOM_TOPOLOGIES = 0x132AC  # global: the custom topologies, sent as they are
+
+
+# The two paths: PICO OS's sound devices, their ACDB devices and app types
+# (audio_platform_info.xml, audio_io_policy.conf), and the backends they play through.
+PATHS: list[dict[str, Any]] = [
+    {
+        "name": "speaker",
+        "acdb_id": 15,
+        "path": 0,
+        "app_type": 0x11130,
+        "rate": 48000,
+        "bits": 16,
+        "backend": "WSA_CDC_DMA_RX_0",
+        "stream_control": "Audio Stream 0 App Type Cfg",
+    },
+    {
+        "name": "handset-mic",
+        "acdb_id": 4,
+        "path": 1,
+        "app_type": 0x11132,
+        "rate": 48000,
+        "bits": 16,
+        "backend": "TX_CDC_DMA_TX_3",
+        "stream_control": "Audio Stream Capture 0 App Type Cfg",
+    },
+]
+
+# The driver (q6calibration-pico4.c): each path's AFE port and ADM path
+# (WSA_CODEC_DMA_RX_0 playback, TX_CODEC_DMA_TX_3 record) and the file the kernel loads.
+MAINLINE_PORTS = {"speaker": (0xB000, 1), "handset-mic": (0xB037, 2)}
+MAINLINE_MAGIC = b"P4AC"
+MAINLINE_VERSION = 2
+MAINLINE_FILE = "/usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin"
+#: The database's values are little-endian 32-bit words.
+WORD_SIZE = 4
+
+
+def u32s(data: bytes) -> list[int]:
+    """Return the data's whole words."""
+    return list(struct.unpack_from(f"<{len(data) // WORD_SIZE}I", data))
+
+
+class AcdbFile:
+    """One calibration database file: "QCMSNDDB", then chunks of named tables."""
+
+    def __init__(self, path: str | Path) -> None:
+        """Read the file's tables; a file of another kind is refused."""
+        data = Path(path).read_bytes()
+        if data[:8] != b"QCMSNDDB":
+            msg = f"{path}: not a calibration database"
+            raise ValueError(msg)
+        self.path = path
+        self.kind = ""
+        self.tables: dict[str, bytes] = {}
+        off = 16
+        while off + 16 <= len(data):
+            self.kind = data[off : off + 4].decode("latin1")  # AVDB device, GCDB global
+            size = struct.unpack_from("<I", data, off + 8)[0]
+            p, end = off + 16, off + 16 + size
+            while p + 12 <= end:
+                name = data[p : p + 8].decode("latin1")
+                length = struct.unpack_from("<I", data, p + 8)[0]
+                self.tables[name] = data[p + 12 : p + 12 + length]
+                p += 12 + length
+            off = end
+        self.pool = self.tables.get("DATAPOOL", b"")
+
+    def record(self, off: int) -> bytes:
+        """Return the data pool's length-prefixed record at this offset."""
+        length = struct.unpack_from("<I", self.pool, off)[0]
+        return self.pool[off + 4 : off + 4 + length]
+
+    def rows(self, name: str, width: int) -> list[list[int]]:
+        """Return a lookup table's rows of this many words; none when the file lacks the table."""
+        if name not in self.tables:
+            return []
+        values = u32s(self.tables[name])
+        count = values[0]
+        if len(values) - 1 != count * width:
+            msg = f"{self.path}: {name} holds {len(values) - 1} words, not {count} x {width}"
+            raise ValueError(msg)
+        return [values[1 + i * width : 1 + (i + 1) * width] for i in range(count)]
+
+    def device_property(self, device: int, prop: int) -> bytes | None:
+        """Return one device's property, None when the file has none."""
+        for dev, pid, off in self.rows("DPROPLUT", 3):
+            if dev == device and pid == prop:
+                return self.record(off)
+        return None
+
+    def global_property(self, prop: int) -> bytes | None:
+        """Return a global property, None when the file has none."""
+        for pid, off in self.rows("GPROPLUT", 2):
+            if pid == prop:
+                return self.record(off)
+        return None
+
+    def devices(self) -> set[int]:
+        """Return the devices this file holds properties of."""
+        return {dev for dev, _pid, _off in self.rows("DPROPLUT", 3)}
+
+    def table(self, prefix: str, key: tuple[int, ...]) -> bytes | None:
+        """Return the calibration of @p key in an instance table (prefix + LUT0/CDFT/CDOT).
+
+        It is packed as the DSP's parameter list: per parameter {module, instance, 0, parameter,
+        size} and its data, padded to four bytes. None when the table has no such key.
+        """
+        for row in self.rows(prefix + "LUT0", len(key) + 2):
+            if tuple(row[: len(key)]) != key:
+                continue
+            ids_at, data_at = row[len(key)], row[len(key) + 1]
+            ids, offsets = self.tables[prefix + "CDFT"], self.tables[prefix + "CDOT"]
+            count = struct.unpack_from("<I", ids, ids_at)[0]
+            if struct.unpack_from("<I", offsets, data_at)[0] != count:
+                msg = f"{self.path}: {prefix} tables disagree for {key}"
+                raise ValueError(msg)
+            out = b""
+            for i in range(count):
+                module, instance, param = struct.unpack_from("<III", ids, ids_at + 4 + 12 * i)
+                data = self.record(struct.unpack_from("<I", offsets, data_at + 4 + 4 * i)[0])
+                pad = -len(data) % 4
+                out += struct.pack("<IHHII", module, instance & 0xFFFF, 0, param, len(data) + pad)
+                out += data + bytes(pad)
+            return out
+        return None
+
+
+def pair_value(data: bytes | None, key: int) -> int | None:
+    """Return the value paired with @p key in a list of {key, value} words, None without one."""
+    values = u32s(data or b"")
+    for i in range(0, len(values) - 1, 2):
+        if values[i] == key:
+            return values[i + 1]
+    return None
+
+
+def lookup(acdb_dir: str) -> dict:
+    """Return everything the two paths need from the database."""
+    files = [AcdbFile(p) for p in sorted(Path(acdb_dir).glob("*.acdb"))]
+    shared = [f for f in files if f.kind == "GCDB"]
+    if not shared:
+        msg = f"no global calibration file in {acdb_dir}"
+        raise FileNotFoundError(msg)
+    shared = shared[0]
+    if u32s(shared.global_property(PROP_INSTANCE_IDS) or b"\0\0\0\0")[0] != 1:
+        msg = "the database does not use instance tables, which this tool reads"
+        raise ValueError(msg)
+    custom = shared.global_property(PROP_CUSTOM_TOPOLOGIES)
+    if not custom:
+        msg = "no custom topologies in the global file"
+        raise ValueError(msg)
+    result: dict[str, Any] = {"custom_topologies": custom, "paths": []}
+    for p in PATHS:
+        owner = next((f for f in files if f.kind == "AVDB" and p["acdb_id"] in f.devices()), None)
+        if owner is None:
+            msg = f"acdb device {p['acdb_id']} ({p['name']}) is in no file"
+            raise ValueError(msg)
+        afe = owner.device_property(p["acdb_id"], PROP_AFE_TOPOLOGY)
+        entry: dict[str, Any] = dict(p)
+        entry.update(
+            {
+                "file": Path(owner.path).name,
+                "adm_topology": pair_value(owner.device_property(p["acdb_id"], PROP_ADM_TOPOLOGY), p["app_type"]),
+                "afe_topology": u32s(afe)[0] if afe and len(afe) >= WORD_SIZE else None,
+                "asm_topology": pair_value(shared.global_property(PROP_ASM_TOPOLOGY), p["app_type"]),
+                "audproc": owner.table("AGII", (p["acdb_id"], p["rate"], p["app_type"])),
+                # Volume tables are for playback; PICO OS sends step 0.
+                "audvol": owner.table("AVII", (p["acdb_id"], p["app_type"], 0)) if p["path"] == 0 else None,
+            }
+        )
+        if entry["adm_topology"] is None or entry["afe_topology"] is None:
+            msg = f"{p['name']}: no topology in {entry['file']}"
+            raise ValueError(msg)
+        result["paths"].append(entry)
+    return result
+
+
+def describe(cal: dict) -> dict:
+    """Return what show prints: the topologies in hex and the blocks' sizes."""
+    out = {"custom_topologies_bytes": len(cal["custom_topologies"]), "paths": []}
+    for p in cal["paths"]:
+        out["paths"].append(
+            {
+                "name": p["name"],
+                "acdb_id": p["acdb_id"],
+                "file": p["file"],
+                "app_type": hex(p["app_type"]),
+                "adm_topology": hex(p["adm_topology"]),
+                "afe_topology": hex(p["afe_topology"]),
+                "asm_topology": hex(p["asm_topology"]) if p["asm_topology"] is not None else None,
+                "audproc_bytes": len(p["audproc"] or b""),
+                "audvol_bytes": len(p["audvol"] or b""),
+            }
+        )
+    return out
+
+
+def pad4(data: bytes) -> bytes:
+    """Pad to four bytes, as the driver reads the file."""
+    return data + b"\0" * (-len(data) % 4)
+
+
+def mainline_file(cal: dict) -> bytes:
+    """Build the kernel's calibration file.
+
+    The custom topologies, then per path its port, ADM path, device and port topologies and the
+    parameters PICO OS sends after the open (the processing blocks, then the volume table's step 0),
+    as the database packs them.
+    """
+    out = MAINLINE_MAGIC + struct.pack("<III", MAINLINE_VERSION, len(cal["custom_topologies"]), len(cal["paths"]))
+    out += pad4(cal["custom_topologies"])
+    for p in cal["paths"]:
+        port, path = MAINLINE_PORTS[p["name"]]
+        params = (p["audproc"] or b"") + (p["audvol"] or b"")
+        out += struct.pack("<HHIII", port, path, p["adm_topology"], p["afe_topology"], len(params)) + pad4(params)
+    return out
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    """Write the kernel's file; at image build, into the image's tree."""
+    data = mainline_file(lookup(args.acdb))
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(data)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Show the database's blocks or export the kernel's file."""
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name in ("show", "export"):
+        p = sub.add_parser(name)
+        p.add_argument("--acdb", default=ACDB_DIR, help="directory of the .acdb files")
+        if name == "export":
+            p.add_argument("output", nargs="?", default=MAINLINE_FILE, help="the kernel's file")
+    args = parser.parse_args(argv)
+    if args.command == "show":
+        print(json.dumps(describe(lookup(args.acdb)), indent=2))
+        return 0
+    return cmd_export(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

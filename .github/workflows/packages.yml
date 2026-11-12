@@ -39,8 +39,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Layers, recipes and image definitions
         run: python3 -m unittest -v
-      - name: The build script
-        run: shellcheck build/*.sh
+      - name: The shell scripts, the build's and the recipes'
+        run: python3 build/shellcheck.py
       - name: The packages to build
         id: plan
         run: |

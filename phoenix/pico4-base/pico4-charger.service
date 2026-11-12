@@ -1,0 +1,8 @@
+# Charger mode's key and power watch: the power key held 2 s starts the system, 10 s without USB
+# power turn the headset off (pico4-charger.target).
+[Unit]
+Description=Charger mode: power key and USB power
+After=basic.target
+
+[Service]
+ExecStart=/usr/libexec/pico4/charger

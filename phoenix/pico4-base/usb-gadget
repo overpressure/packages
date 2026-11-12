@@ -1,0 +1,70 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# The USB link to the PC (pico4-usb-gadget.service): the composite gadget the maintenance stage 1
+# sets up too, so the PC sees the same device and adapter in both (docs/stage1.md):
+#   network : NCM, headset 172.16.42.1, the PC 172.16.42.2 by DHCP (50-pico4-usb.network)
+#   logdisk : a read-only FAT drive, its medium written by pico4-userspace-logdisk
+#   serial  : ACM, no shell on it
+# The MAC addresses come from the serial number, as stage 1 derives them.
+. /usr/libexec/pico4/lib.sh
+set -u
+G=/sys/kernel/config/usb_gadget/pico4
+C=$G/configs/c.1
+
+udc=""
+for _ in $(seq 60); do
+	udc=$(ls /sys/class/udc 2>/dev/null | head -n 1)
+	[ -n "$udc" ] && break
+	sleep 1
+done
+[ -n "$udc" ] || { log "USB: no device controller"; exit 1; }
+if [ -n "$(cat "$G/UDC" 2>/dev/null)" ]; then
+	log "USB: gadget already bound to $(cat "$G/UDC")"
+	exit 0
+fi
+
+mac_from() {
+	echo "$1" | md5sum | sed "s/^\(..\)\(..\)\(..\)\(..\)\(..\).*/$2:\1:\2:\3:\4:\5/"
+}
+serial=$(device_serial)
+dev_mac=$(mac_from "$serial" 02)
+host_mac=$(mac_from "$serial" 06)
+
+mkdir -p "$G/strings/0x409" "$C/strings/0x409" || { log "USB: cannot create the gadget"; exit 1; }
+write 0x1d6b "$G/idVendor"   # Linux Foundation
+write 0x0104 "$G/idProduct"  # Multifunction Composite Gadget
+write 0x0100 "$G/bcdDevice"
+write 0xEF "$G/bDeviceClass" # composite device with IADs (Windows)
+write 0x02 "$G/bDeviceSubClass"
+write 0x01 "$G/bDeviceProtocol"
+write "$serial" "$G/strings/0x409/serialnumber"
+write pico4 "$G/strings/0x409/manufacturer"
+write "PICO 4 Linux" "$G/strings/0x409/product"
+write pico4 "$C/strings/0x409/configuration"
+write 500 "$C/MaxPower"
+
+mkdir -p "$G/functions/ncm.usb0" || { log "USB: no NCM function"; exit 1; }
+write "$dev_mac" "$G/functions/ncm.usb0/dev_addr"
+write "$host_mac" "$G/functions/ncm.usb0/host_addr"
+ln -sfn "$G/functions/ncm.usb0" "$C/"
+# Windows binds NCM by itself when the function announces it through MS OS descriptors.
+if [ -d "$G/functions/ncm.usb0/os_desc/interface.ncm" ]; then
+	write WINNCM "$G/functions/ncm.usb0/os_desc/interface.ncm/compatible_id"
+	write 1 "$G/os_desc/use"
+	write 0xcd "$G/os_desc/b_vendor_code"
+	write MSFT100 "$G/os_desc/qw_sign"
+	ln -sfn "$C" "$G/os_desc/"
+fi
+# The log drive starts without a medium; pico4-userspace-logdisk inserts one.
+if mkdir -p "$G/functions/mass_storage.0"; then
+	lun=$G/functions/mass_storage.0/lun.0
+	write 1 "$lun/removable"
+	write 1 "$lun/ro"
+	ln -sfn "$G/functions/mass_storage.0" "$C/"
+fi
+mkdir -p "$G/functions/acm.usb0" && ln -sfn "$G/functions/acm.usb0" "$C/"
+
+write "$udc" "$G/UDC" || { log "USB: binding the gadget to $udc failed"; exit 1; }
+iface=$(cat "$G/functions/ncm.usb0/ifname" 2>/dev/null)
+printf 'IFACE=%s\nMAC=%s\nIP=%s\n' "$iface" "$dev_mac" "$P4_IP" > "$P4_RUN/usb-link.env"
+log "USB: gadget bound to $udc with ncm ($iface), mass_storage, acm; serial=$serial"

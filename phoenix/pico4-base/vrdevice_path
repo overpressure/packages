@@ -1,0 +1,36 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# The Steam Frame's device lookup for the PICO 4 (docs/session.md#steam-link): SteamVR's
+# Steam Link client (vrlink) and the Frame's steam-video-codec-setup.service ask
+# `vrdevice_path video_decode|video_encode` for the hardware video codec's node. The Frame
+# finds its codec by name in `v4l2-ctl --list-devices`; here it is Venus, whose nodes that listing skips, so this looks at
+# the codec's own nodes by their card name and never opens the cameras' nodes. Other keys are the
+# Frame's hardware.
+set -euo pipefail
+
+case "${1:-}" in
+	video_decode) cards=("Qualcomm Venus video decoder") ;;
+	video_encode) cards=("Qualcomm Venus video encoder") ;;
+	*)
+		echo "vrdevice_path: no such device on the PICO 4: ${1:-} (video_decode, video_encode)" >&2
+		exit 1
+		;;
+esac
+
+# The codec's device (aa00000.video-codec).
+for node in /sys/class/video4linux/video*; do
+	case "$(readlink -f "$node/device")" in
+	*.video-codec) ;;
+	*) continue ;;
+	esac
+	dev=/dev/${node##*/}
+	info=$(v4l2-ctl -d "$dev" --info 2>/dev/null) || continue
+	for card in "${cards[@]}"; do
+		if grep -Eq "^[[:space:]]*Card type[[:space:]]*: $card$" <<< "$info"; then
+			echo "$dev"
+			exit 0
+		fi
+	done
+done
+echo "vrdevice_path: no ${cards[0]} node (is Venus's firmware in /usr/lib/firmware?)" >&2
+exit 1

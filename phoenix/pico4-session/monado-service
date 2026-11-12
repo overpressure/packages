@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# Monado's service (pico4-monado.service): Vulkan's display in direct mode, as SteamVR's compositor
+# does, with three swapchain images: Turnip's display WSI hands an image back only once the next flip
+# completed, and with Monado's default of two every second refresh was missed (45 Hz).
+# Graphics, not compute: Turnip renders into the panels' images about twice as fast as compute writes them.
+export XRT_COMPOSITOR_FORCE_VK_DISPLAY=0 XRT_COMPOSITOR_PREFERRED_IMAGE_COUNT=3 XRT_COMPOSITOR_COMPUTE=0
+exec /usr/bin/monado-service "$@"

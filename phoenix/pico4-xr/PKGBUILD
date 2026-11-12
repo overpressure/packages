@@ -1,0 +1,82 @@
+# The PICO 4's XR hardware around Monado's driver: the sensor DSP (SLPI) and its sensors process's file
+# server, the head IMU's readiness, the Compute DSP and PICO OS's head tracker's services (pico4-slamd itself
+# is built by the image's build from PICO OS's files), the device tools (pico4-imu, pico4-station, pico4-lens,
+# pico4-listeners, pico4-still-gate), the XR devices' permissions and the cameras kept from v4l_id and
+# WirePlumber. The preset enables the sensors; the tests run in the build.
+pkgname=pico4-xr
+pkgver=1
+pkgrel=1
+pkgdesc="PICO 4 XR hardware: the sensor and compute DSPs, the head IMU, the station, lenses and cameras"
+arch=(any)
+url="https://github.com/overpressure/overpressure/tree/main/devices/phoenix/docs"
+license=(Unlicense)
+depends=(bash python systemd)
+backup=(etc/udev/rules.d/60-persistent-v4l.rules
+        etc/wireplumber/wireplumber.conf.d/50-pico4-no-cameras.conf)
+source=(60-persistent-v4l.rules
+        50-pico4-no-cameras.conf
+        pico4-imu
+        pico4-lens
+        pico4-listeners
+        pico4-station
+        pico4-still-gate
+        pico4-cdsp.service
+        pico4-cdsprpcd.service
+        pico4-imu-ready.service
+        pico4-sensors.target
+        pico4-sensorspd.service
+        pico4-slamd.service
+        pico4-slpi.service
+        70-pico4-xr.rules
+        sensorspd
+        stock-slam
+        50-pico4-xr.preset
+        test_imu.py test_imu_wait.py test_lens_tool.py test_station_tool.py test_listeners_still_gate.py)
+sha256sums=('c8eff56c71f68fce30eff72038cdecc49e52e416ffc357284ea29698ccae3a46'
+            '4bda117b2136fdfbf7125b51643f6c56558db37b233ae538798ee806e69e1efc'
+            '8c5eb9a0ca4036f02d8f521ef15ab2494b79551f942d010a8a7ef03268618771'
+            'bf72331916eaec4b23996d8dc008125994dc356402429e1611bbcf672cb2c9e3'
+            '25edda0f661d54bd5b717c2f5adfd1f34f50d38f4f61ef368981210b0110caed'
+            '604053f65b4934d81bacc8c41a0168b2ccef3082a1618888a4c5750ed9fc4f2e'
+            '20782789dacffbebb94fdc1072782f155e43651867bc612970a881d9534fc665'
+            '4d3f124f77ae50caa6b163aeeb6748a3079124207cb2d4b4bb819f477e4d6ecd'
+            '970a3f945bb7b11124c67d8daa7154738ebde82bef770428881951220ac96c9c'
+            '48541b0e3753785be8bf157fb8bb7e0fc511bc148a7cfbb4e497f5ce9f514b52'
+            '7b8d87a76f541b397b386ef9f41d76a2eb89c62b8a4a85d35ce9af5e639b3196'
+            'f8f2f3934966e17bf43aa04ec5dbbc2481723aae67d7001b81e9d938f7a6ef18'
+            '9213935a00deab60f68dcf39f6b6de045f3ca63742202974fafc2471d288d40d'
+            '0ead62aef6025c655419e4ab8882f05b8e754b7e3d2ab4e8aaf540a7c83a0f2e'
+            '4f00f78258093f698a07fa681725c8b8e70daa76f6e883cb688dc63d3b866e5e'
+            '5ffd3b167a5ee8604d56d4e9f7a346eb980860cc026b5915ef0287d80af3ee93'
+            '3cc76be5a6b83e1c68c0c8c1de54610fb61b452023a2eb35f3363ab0f7a4cabe'
+            '9c041fb592fd107346dcad9ef6384d14973aae437a760fdc41fd59ed109f599b'
+            '0b9fe5a3d6034964e1690fb40166398a7e9b7cfe247e54fd3ca90d8a2a550fce'
+            'a4ebecf6717f86bc0ee8e177a95abffd3297d3cdde08b34983da1d0218536710'
+            'dd6299b84771754a24dab6eb769b417f237993c4f7ffb6e1b66ac88f7649835b'
+            '3176f0fd497cfeaa3bd84056926fd3227131701cfb9a1e2465d3807a7a5f4829'
+            'd10d79fe429ca863663864e6c9748600fa421db7e6c488b7996e0f80256593df')
+
+build() {
+  python3 -B -m unittest test_imu test_imu_wait test_lens_tool test_station_tool test_listeners_still_gate
+}
+
+package() {
+  install -Dm644 60-persistent-v4l.rules "$pkgdir/etc/udev/rules.d/60-persistent-v4l.rules"
+  install -Dm644 50-pico4-no-cameras.conf "$pkgdir/etc/wireplumber/wireplumber.conf.d/50-pico4-no-cameras.conf"
+  install -Dm755 pico4-imu "$pkgdir/usr/bin/pico4-imu"
+  install -Dm755 pico4-lens "$pkgdir/usr/bin/pico4-lens"
+  install -Dm755 pico4-listeners "$pkgdir/usr/bin/pico4-listeners"
+  install -Dm755 pico4-station "$pkgdir/usr/bin/pico4-station"
+  install -Dm755 pico4-still-gate "$pkgdir/usr/bin/pico4-still-gate"
+  install -Dm644 pico4-cdsp.service "$pkgdir/usr/lib/systemd/system/pico4-cdsp.service"
+  install -Dm644 pico4-cdsprpcd.service "$pkgdir/usr/lib/systemd/system/pico4-cdsprpcd.service"
+  install -Dm644 pico4-imu-ready.service "$pkgdir/usr/lib/systemd/system/pico4-imu-ready.service"
+  install -Dm644 pico4-sensors.target "$pkgdir/usr/lib/systemd/system/pico4-sensors.target"
+  install -Dm644 pico4-sensorspd.service "$pkgdir/usr/lib/systemd/system/pico4-sensorspd.service"
+  install -Dm644 pico4-slamd.service "$pkgdir/usr/lib/systemd/system/pico4-slamd.service"
+  install -Dm644 pico4-slpi.service "$pkgdir/usr/lib/systemd/system/pico4-slpi.service"
+  install -Dm644 70-pico4-xr.rules "$pkgdir/usr/lib/udev/rules.d/70-pico4-xr.rules"
+  install -Dm755 sensorspd "$pkgdir/usr/libexec/pico4/sensorspd"
+  install -Dm755 stock-slam "$pkgdir/usr/libexec/pico4/stock-slam"
+  install -Dm644 50-pico4-xr.preset -t "$pkgdir/usr/lib/systemd/system-preset"
+}

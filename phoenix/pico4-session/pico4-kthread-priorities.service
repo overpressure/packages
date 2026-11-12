@@ -1,0 +1,13 @@
+# The PICO 4's counterpart of the Frame's steamvr-set-kernel-thread-priorities.service
+# (masked: its script stops at its first entry here).
+[Unit]
+Description=Real-time priority for the PICO 4's GPU and display kernel threads
+ConditionPathExists=/sys/bus/workqueue/devices/ring0/prio
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/kthread-priorities
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=FastRPC file server for the SLPI sensors process (sensor registry and config)
+ConditionPathExists=/usr/share/qcom/pico4/sensors/config
+ConditionPathExists=/sys/class/remoteproc
+Requires=pico4-slpi.service
+# The SoC values come from debugfs.
+After=pico4-slpi.service sys-kernel-debug.mount
+
+[Service]
+# The sensors process's runtime root (the script says why).
+ExecStart=/usr/libexec/pico4/sensorspd
+# When the SLPI restarts (subsystem restart, level RELATED) hexagonrpcd loses its FastRPC
+# channel and exits successfully; the restarted sensors process needs it again, and the
+# head IMU only comes back once it runs (docs/xr.md).
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=pico4-sensors.target

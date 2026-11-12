@@ -1,0 +1,56 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# FastRPC file server for the SLPI's sensors process (hexagonrpcd): the sensor registry and
+# configuration under /usr/share/qcom/pico4.
+#
+# The kernel's socinfo lacks the attributes the sensors process reads from the stock kernel's
+# (/sys/devices/soc0): those are written into a runtime copy of the root, from the same SMEM
+# values the stock kernel shows, and named as it names them.
+. /usr/libexec/pico4/lib.sh
+set -u
+ROOT=/usr/share/qcom/pico4
+RUN_ROOT=$P4_RUN/sensors-root
+SMEM=/sys/kernel/debug/qcom_socinfo
+
+# The stock kernel's names for the values it shows on the PICO 4; others are refused rather
+# than guessed.
+stock_name() {
+	case "$1:$2" in
+	platform:8) echo MTP ;;
+	subtype:0) echo Unknown ;;
+	soc:356) echo KONA ;;
+	*) return 1 ;;
+	esac
+}
+
+runtime_root() {
+	local platform subtype soc e
+	platform=$(cat "$SMEM/hardware_platform" 2>/dev/null) && subtype=$(cat "$SMEM/hardware_platform_subtype" 2>/dev/null) ||
+		{ log "sensorspd: no socinfo in $SMEM"; return 1; }
+	soc=$(cat /sys/devices/soc0/soc_id)
+	for e in "platform:$platform" "subtype:$subtype" "soc:$soc"; do
+		stock_name "${e%%:*}" "${e#*:}" > /dev/null || { log "sensorspd: no stock name for $e"; return 1; }
+	done
+	rm -rf "$RUN_ROOT"
+	mkdir -p "$RUN_ROOT/socinfo"
+	for e in "$ROOT"/*; do
+		ln -s "$e" "$RUN_ROOT/${e##*/}"
+	done
+	stock_name platform "$platform" > "$RUN_ROOT/socinfo/hw_platform"
+	stock_name subtype "$subtype" > "$RUN_ROOT/socinfo/platform_subtype"
+	echo "$subtype" > "$RUN_ROOT/socinfo/platform_subtype_id"
+	cat "$SMEM/platform_version" > "$RUN_ROOT/socinfo/platform_version"
+	stock_name soc "$soc" > "$RUN_ROOT/socinfo/machine"
+	echo "$soc" > "$RUN_ROOT/socinfo/soc_id"
+	cat /sys/devices/soc0/revision > "$RUN_ROOT/socinfo/revision"
+}
+
+node=/dev/fastrpc-sdsp
+runtime_root || exit 1
+# udev creates the node during coldplug.
+for _ in $(seq 100); do
+	[ -c "$node" ] && break
+	sleep 0.1
+done
+[ -c "$node" ] || { log "sensorspd: no $node"; exit 1; }
+exec /usr/bin/hexagonrpcd -f "$node" -d sdsp -s -R "$RUN_ROOT"

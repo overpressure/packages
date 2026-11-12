@@ -1,0 +1,65 @@
+# The PICO 4's checks, which the host's dev check and the installer run over SSH: pico4-userspace-check and
+# pico4-valve-session-check (with msm-frame-stats and session-performance; their JSON is what the host
+# reads), the suspend check, the support bundle, the log drive on the USB link and the link's samples after
+# boot. The preset enables the log drive and the link samples; the tests run in the build.
+pkgname=pico4-checks
+pkgver=1
+pkgrel=1
+pkgdesc="PICO 4 checks: the system's and the VR session's acceptance checks, the support bundle, the log drive"
+arch=(any)
+url="https://github.com/overpressure/overpressure/tree/main/devices/phoenix/docs"
+license=(Unlicense)
+depends=(bash python systemd)
+source=(pico4-support-bundle
+        pico4-suspend-check
+        pico4-userspace-check
+        pico4-valve-session-check
+        pico4-userspace-logdisk.service
+        pico4-userspace-logdisk.timer
+        pico4-userspace-netdiag.service
+        msm-frame-stats
+        session-performance
+        userspace-logdisk
+        userspace-netdiag
+        50-pico4-checks.preset
+        test_logdisk.py
+        test_msm_frame_stats.py
+        test_session_performance.py
+        test_support_bundle.py
+        test_suspend_check.py)
+sha256sums=('83c000aeb2f6834844c79b5dbac32b76f866f0431461bf89b92415eaff29f8b6'
+            '49ee620087f9d92b65a98a664850338b4ff875821c849017a186e74da316fdcf'
+            'cf6528e038c1cf72d63e8fb3b1eb20bf04f9c26a5615d980582813e3ea63f83a'
+            '8f45c4132463351481a42225b84a160ffccacd9b53e05ede2ddc976f52f21def'
+            'fb870b71f6f8a8290a2ba11f93fd83db2f705ba67b5489f2e223e48336d03f9c'
+            '9e3e9490cc9192e4063ee140c2ff633dba6b06da9db0f16eac0e485085b47e06'
+            '217d4d3db717e8cdb576035d0624b1572ea02eb2152dfe04b26ce51e49ed73f7'
+            '64a632baf97f04878518eb858f52f76e9c40bbcae6334289cc0da75c3c5ba076'
+            'e455db9ef934231bc6f19e59442f0e9bf91993939738e086ffdf109243d7c549'
+            'fd33643faf718e9ba1059ded155a30fe1b0e660521f59b9eb96e1f29b66017f9'
+            '9f5adec43d773f663637bd5bbf6516458f4a0634da6d5362a9190559c501d34d'
+            '01ea35b02d60b8a8675053c7139a8340db86d10039eed4420664791ce8ca17b2'
+            '0a5753e9deb1261616dfe121546a29eb2c91e6ce01100adf681310fddf773f4d'
+            'ff8b9cec4858652c6106226cc601c6cea5e0d1f797fc4422ae1ed6577898e49b'
+            '8563c819b812c16d6fccaa6e9bb6cfc825a8f5bd0d5b0b85e23044ad4894d70e'
+            '71f8feb17dc54eb08505042fd5f7fd685b8f31c9c6acd44c5b2885dbe2dd5600'
+            'bad444faaafc81249c69d06807c9c863ab0c63dee2e945b39a2694ce4541c44f')
+
+build() {
+  python3 -B -m unittest test_logdisk test_msm_frame_stats test_session_performance test_support_bundle test_suspend_check
+}
+
+package() {
+  install -Dm755 pico4-support-bundle "$pkgdir/usr/bin/pico4-support-bundle"
+  install -Dm755 pico4-suspend-check "$pkgdir/usr/bin/pico4-suspend-check"
+  install -Dm755 pico4-userspace-check "$pkgdir/usr/bin/pico4-userspace-check"
+  install -Dm755 pico4-valve-session-check "$pkgdir/usr/bin/pico4-valve-session-check"
+  install -Dm644 pico4-userspace-logdisk.service "$pkgdir/usr/lib/systemd/system/pico4-userspace-logdisk.service"
+  install -Dm644 pico4-userspace-logdisk.timer "$pkgdir/usr/lib/systemd/system/pico4-userspace-logdisk.timer"
+  install -Dm644 pico4-userspace-netdiag.service "$pkgdir/usr/lib/systemd/system/pico4-userspace-netdiag.service"
+  install -Dm755 msm-frame-stats "$pkgdir/usr/libexec/pico4/msm-frame-stats"
+  install -Dm755 session-performance "$pkgdir/usr/libexec/pico4/session-performance"
+  install -Dm755 userspace-logdisk "$pkgdir/usr/libexec/pico4/userspace-logdisk"
+  install -Dm755 userspace-netdiag "$pkgdir/usr/libexec/pico4/userspace-netdiag"
+  install -Dm644 50-pico4-checks.preset -t "$pkgdir/usr/lib/systemd/system-preset"
+}

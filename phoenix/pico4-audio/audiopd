@@ -1,0 +1,16 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# FastRPC file server for the ADSP's audio process (hexagonrpcd): PICO OS starts the static
+# process audiopd from the ADSP's image as "adsprpcd audiopd", and the process loads its
+# configuration from /usr/share/qcom/pico4-audio through it. The audio services (APR's AFE, ASM
+# and ADM) run in that process.
+. /usr/libexec/pico4/lib.sh
+set -u
+node=/dev/fastrpc-adsp
+# udev creates the node during coldplug.
+for _ in $(seq 100); do
+	[ -c "$node" ] && break
+	sleep 0.1
+done
+[ -c "$node" ] || { log "audiopd: no $node"; exit 1; }
+exec /usr/bin/hexagonrpcd -f "$node" -d adsp -P audiopd -R /usr/share/qcom/pico4-audio

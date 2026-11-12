@@ -1,0 +1,23 @@
+# The USB-C link to the PC (pico4-usb-gadget.service): the headset at 172.16.42.1, one DHCP lease
+# for the PC (172.16.42.2), no router or DNS, so the PC keeps its own internet route.
+[Match]
+Name=usb0
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+Address=172.16.42.1/24
+DHCPServer=yes
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+ConfigureWithoutCarrier=yes
+KeepConfiguration=yes
+
+[DHCPServer]
+PoolOffset=2
+PoolSize=1
+EmitDNS=no
+EmitNTP=no
+EmitRouter=no
+DefaultLeaseTimeSec=86400

@@ -1,0 +1,19 @@
+# A sign of life in the lenses while the installed system starts (docs/install.md): preinit's
+# pico4-splash gives the display up to this one, which carries on until a compositor takes the
+# display (it exits by itself): SteamVR's, when Valve's session starts. Charger mode stays dark.
+[Unit]
+Description=Boot indication in the lenses
+DefaultDependencies=no
+ConditionKernelCommandLine=pico4.root=installed
+ConditionKernelCommandLine=!androidboot.mode=charger
+# msm's panels have
+# their mode once pico4-panel-probe has run.
+After=pico4-storage-ro.service pico4-panel-probe.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+ExecStart=/usr/bin/pico4-splash 240
+
+[Install]
+WantedBy=sysinit.target

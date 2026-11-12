@@ -1,0 +1,15 @@
+# The Compute DSP's root listener from PICO OS's vendor partition, in the tracker's root: without
+# it the DSP's loader stalls on the tracker's first module (docs/xr.md#head-tracking).
+[Unit]
+Description=Compute DSP root listener (cdsprpcd)
+ConditionPathExists=/usr/lib/pico4-stock-slam/vendor/bin/cdsprpcd
+# PICO OS's FastRPC speaks ION and adsprpc nodes: stock-slam preloads the FastRPC bridge onto
+# upstream FastRPC (docs/xr.md#head-tracking).
+ConditionPathExists=/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge.so
+Requires=pico4-cdsp.service
+After=pico4-cdsp.service
+
+[Service]
+ExecStart=/usr/libexec/pico4/stock-slam --vendor /vendor/bin/cdsprpcd
+Restart=on-failure
+RestartSec=2

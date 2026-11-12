@@ -1,0 +1,11 @@
+# The first run's introduction and hands-free controller pairing in the headset
+# (docs/session.md#onboarding). It runs with SteamVR.
+[Unit]
+Description=PICO 4 introduction and controller pairing in SteamVR
+PartOf=steamvr.service
+After=steamvr.service
+
+[Service]
+ExecStart=/usr/bin/pico4-onboarding
+Restart=on-failure
+RestartSec=5

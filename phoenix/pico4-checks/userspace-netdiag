@@ -1,0 +1,24 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# Compact samples of the USB link after boot, written through log() (kernel log,
+# boot.log and pstore pmsg). pmsg survives a warm reboot, so the maintenance stage 1
+# exports them on its log drive even when the system's network was unusable.
+. /usr/libexec/pico4/lib.sh
+IFACE=""
+. /run/pico4/usb-link.env 2>/dev/null
+n=/sys/class/net/$IFACE
+# pmsg is small (a few KiB): three samples.
+for t in 20 60 150; do
+	sleep $((t - ${last:-0}))
+	last=$t
+	log "netdiag t+$t $IFACE: $(cat "$n/operstate" 2>/dev/null) carrier=$(cat "$n/carrier" 2>/dev/null)" \
+		"mac=$(cat "$n/address" 2>/dev/null) rx=$(cat "$n/statistics/rx_packets" 2>/dev/null)" \
+		"tx=$(cat "$n/statistics/tx_packets" 2>/dev/null) rxerr=$(cat "$n/statistics/rx_errors" 2>/dev/null)" \
+		"rxdrop=$(cat "$n/statistics/rx_dropped" 2>/dev/null)" \
+		"addr=$(ip -4 -o addr show dev "$IFACE" 2>/dev/null | awk '{print $4}' | tr '\n' ,)" \
+		"links=$(ls /sys/class/net | tr '\n' ,) udc=$(cat /sys/class/udc/*/state 2>/dev/null | tr '\n' ,)"
+	log "netdiag t+$t state=$(systemctl is-system-running 2>&1) failed=$(systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}' | tr '\n' ,)" \
+		"sshd=$(systemctl is-active sshd) networkd=$(networkctl list --no-legend --no-pager 2>/dev/null | awk -v i="$IFACE" '$2 == i {print $4 "/" $5}')" \
+		"nm=$(nmcli -t -f DEVICE,STATE dev 2>/dev/null | grep "^$IFACE:" | cut -d: -f2) listen22=$(ss -Hltn 'sport = :22' 2>/dev/null | wc -l)" \
+		"route=$(ip -4 route show dev "$IFACE" 2>/dev/null | tr '\n' ,)"
+done

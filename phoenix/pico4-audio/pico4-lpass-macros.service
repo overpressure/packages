@@ -1,0 +1,13 @@
+[Unit]
+Description=Bind the LPASS VA macro once the ADSP's audio process runs
+ConditionPathExists=/sys/bus/platform/drivers/va_macro
+Wants=pico4-audiopd.service
+After=pico4-audiopd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/lpass-macros
+
+[Install]
+WantedBy=pico4-audio.target

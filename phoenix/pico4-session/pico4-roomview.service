@@ -1,0 +1,14 @@
+# SteamVR's room view from the PICO 4's forward tracking cameras (docs/xr.md#passthrough):
+# the client of SteamVR's private passthrough interface that the Frame's XR service is. It
+# takes the frames that driver_monado shares from vrserver, so it runs with SteamVR.
+[Unit]
+Description=SteamVR room view from the PICO 4's cameras
+PartOf=steamvr.service
+After=steamvr.service
+
+[Service]
+ExecStart=/usr/bin/pico4-roomview
+# Valve's Mesa settings for SteamVR's processes, as steamvr.service reads them.
+EnvironmentFile=-/usr/share/deckard/mesavars.sh
+Restart=on-failure
+RestartSec=5

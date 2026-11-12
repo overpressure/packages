@@ -1,0 +1,153 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Unlicense
+"""Maps the games Valve runs with Proton Experimental to Proton stable (docs/session.md, Games).
+
+Valve recommends a Proton per game (the client's 'non-user mapping', logged in compat_log.txt).
+For some games that is Proton Experimental, whose DXVK requires 8-bit storage buffers; the
+PICO 4's Adreno 650 has none (Mesa: Adreno 7xx only), so DXVK finds no GPU and the game
+crashes in dxgi.dll. Proton stable's DXVK runs on it. A user mapping (priority 250, what the
+client's per-game compatibility setting writes) to Proton stable goes into config.vdf for
+every game whose latest recommendation is Proton Experimental and which has no mapping of the
+user's. The client rewrites config.vdf while it runs, so this runs while it is stopped; the
+rest of the file is kept byte for byte.
+
+    steam-proton-mapping [CONFIG_VDF [COMPAT_LOG...]]
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import sys
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator, Sequence
+
+STEAM = Path("~/.local/share/Steam").expanduser()
+CONFIG = str(STEAM / "config/config.vdf")
+LOGS = [str(STEAM / "logs/compat_log.previous.txt"), str(STEAM / "logs/compat_log.txt")]
+EXPERIMENTAL = "proton-experimental-arm64"
+STABLE = "proton-stable"
+RECOMMENDED = re.compile(r"Recording non-user mapping for (\d+) at priority \d+ to tool (\S+)")
+
+
+def log_lines(path: str) -> Iterator[str]:
+    """Yield a log's lines; a missing or unreadable log ends them."""
+    try:
+        with Path(path).open(encoding="utf-8", errors="replace") as f:
+            yield from f
+    except OSError:
+        return
+
+
+def recommended(logs: Iterable[str]) -> dict[str, str]:
+    """Return the latest tool Valve recommended per app id, from the client's compat logs (oldest first)."""
+    tools = {}
+    for path in logs:
+        for line in log_lines(path):
+            m = RECOMMENDED.search(line)
+            if m:
+                tools[m.group(1)] = m.group(2)
+    return tools
+
+
+class Node:
+    """A KeyValues block: its children by lower-case key, and where its braces are."""
+
+    def __init__(self, open_at: int) -> None:
+        """Start a block at its opening brace; its closing brace comes later."""
+        self.open_at = open_at
+        self.close_at = -1
+        self.children: dict[str, Node] = {}
+
+
+def parse(text: str) -> Node:
+    """KeyValues text (quoted keys and values, braces, // comments); ValueError if malformed."""
+    tokens = re.finditer(r'"((?:[^"\\]|\\.)*)"|([{}])|//[^\n]*|\s+|(.)', text)
+    root = Node(-1)
+    stack = [root]
+    key = None
+    for t in tokens:
+        if t.group(3) is not None:
+            msg = f"unexpected {t.group(3)!r} at {t.start()}"
+            raise ValueError(msg)
+        if t.group(1) is not None:
+            key = t.group(1) if key is None else None  # a key, or else its value
+        elif t.group(2) == "{":
+            if key is None:
+                msg = f"block without a key at {t.start()}"
+                raise ValueError(msg)
+            node = Node(t.start())
+            stack[-1].children[key.lower()] = node
+            stack.append(node)
+            key = None
+        elif t.group(2) == "}":
+            if len(stack) == 1 or key is not None:
+                msg = f"unexpected }} at {t.start()}"
+                raise ValueError(msg)
+            stack.pop().close_at = t.start()
+    if len(stack) != 1 or key is not None:
+        msg = "unterminated block"
+        raise ValueError(msg)
+    return root
+
+
+def entry(app: str, depth: int) -> str:
+    """One mapping block at a depth of tabs."""
+    t = "\t" * depth
+    return f'{t}"{app}"\n{t}{{\n{t}\t"name"\t\t"{STABLE}"\n{t}\t"config"\t\t""\n{t}\t"priority"\t\t"250"\n{t}}}\n'
+
+
+def remap(text: str, apps: list[str]) -> tuple[str, list[str]]:
+    """config.vdf's text with mappings for the apps that have none; and the apps added."""
+    root = parse(text)
+    steam = root
+    for key in ("installconfigstore", "software", "valve", "steam"):
+        steam = steam.children.get(key)
+        if steam is None:
+            msg = f"config.vdf has no {key}"
+            raise ValueError(msg)
+    mapping = steam.children.get("compattoolmapping")
+    added = [app for app in apps if mapping is None or app not in mapping.children]
+    if not added:
+        return text, []
+    if mapping is not None:
+        # Before the mapping block's closing brace, after the line it starts.
+        at = text.rindex("\n", 0, mapping.close_at) + 1
+        return text[:at] + "".join(entry(app, 5) for app in added) + text[at:], added
+    at = text.index("\n", steam.open_at) + 1
+    block = '\t\t\t\t"CompatToolMapping"\n\t\t\t\t{\n' + "".join(entry(app, 5) for app in added) + "\t\t\t\t}\n"
+    return text[:at] + block + text[at:], added
+
+
+def main(argv: Sequence[str]) -> int:
+    """Add the mappings to config.vdf, replacing it atomically, or leave it alone."""
+    config = argv[1] if len(argv) > 1 else CONFIG
+    logs = argv[2:] or LOGS
+    apps = sorted(app for app, tool in recommended(logs).items() if tool == EXPERIMENTAL)
+    if not apps:
+        return 0
+    try:
+        with Path(config).open(encoding="utf-8", newline="") as f:
+            text = f.read()
+        text, added = remap(text, apps)
+    except (OSError, ValueError) as e:
+        # Never a guess at the client's own file: it stays as it is.
+        print(f"steam-proton-mapping: {config} left alone: {e}")
+        return 0
+    if not added:
+        return 0
+    fd, tmp = tempfile.mkstemp(dir=Path(config).parent, prefix=".config.vdf.")
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+    Path(tmp).chmod(Path(config).stat().st_mode & 0o7777)
+    Path(tmp).replace(config)
+    print(f"steam-proton-mapping: {', '.join(added)} mapped to {STABLE} (Valve recommends {EXPERIMENTAL})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

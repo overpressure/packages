@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: Unlicense
+// The session user sets the system's time zone (the Steam client's setting through
+// steamos-set-timezone, the first-run setup), as on SteamOS; nothing else of timedated's.
+polkit.addRule(function (action, subject) {
+	if (action.id === "org.freedesktop.timedate1.set-timezone" && subject.user === "steamos") {
+		return polkit.Result.YES;
+	}
+});

@@ -1,0 +1,22 @@
+# The units pico4-base starts with the system.
+enable sshd.service
+enable systemd-networkd.service
+enable NetworkManager.service
+enable systemd-timesyncd.service
+enable bluetooth.service
+enable steam-video-codec-setup.service
+enable pico4-recovery-watch.service
+enable pico4-storage-ro.service
+enable pico4-usb-internet.service
+enable pico4-splash.service
+enable pico4-persist.service
+enable pico4-zram-swap.service
+enable pico4-venus-probe.service
+enable pico4-bt-firmware.service
+enable pico4-bt-address.service
+enable pico4-wlan-probe.service
+enable pico4-wlan-address.service
+enable pico4-panel-probe.service
+enable pico4-clock.service
+enable pico4-usb-gadget.service
+enable pico4-boot-ok.service

@@ -1,0 +1,9 @@
+# Charger mode (docs/install.md#charger-mode): powered on by the USB cable, the bootloader passes
+# androidboot.mode=charger and preinit starts this target instead of the default one, as PICO OS
+# runs AOSP's charger. The lenses stay dark; the USB link and SSH come up.
+[Unit]
+Description=Charger mode
+Requires=basic.target pico4-charger.service
+Wants=pico4-usb-gadget.service systemd-networkd.service sshd.service
+After=basic.target pico4-charger.service
+AllowIsolate=yes

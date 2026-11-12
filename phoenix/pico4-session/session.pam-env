@@ -1,0 +1,6 @@
+# pam_env for pico4-session.service (see /etc/pam.d/pico4-session): a graphical
+# session on seat0 of class user, as sddm makes on the Frame. gamescope's
+# Wayland server opens the seat through logind (libseat).
+XDG_SESSION_CLASS DEFAULT=user
+XDG_SESSION_TYPE  DEFAULT=wayland
+XDG_SEAT          DEFAULT=seat0

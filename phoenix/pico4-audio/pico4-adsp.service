@@ -1,0 +1,12 @@
+[Unit]
+Description=Boot the audio DSP (ADSP)
+ConditionPathExists=/usr/lib/firmware/adsp.mdt
+ConditionPathExists=/sys/class/remoteproc
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/remoteproc-boot adsp
+
+[Install]
+WantedBy=pico4-audio.target

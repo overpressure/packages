@@ -1,0 +1,11 @@
+# The Compute DSP, for PICO OS's head tracker (docs/xr.md#head-tracking).
+[Unit]
+Description=Boot the Compute DSP (CDSP)
+ConditionPathExists=/usr/lib/firmware/cdsp.mdt
+ConditionPathExists=/sys/class/remoteproc
+After=systemd-udev-trigger.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/pico4/remoteproc-boot cdsp

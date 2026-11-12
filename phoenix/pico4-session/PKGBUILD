@@ -1,0 +1,155 @@
+# Valve's VR session on the PICO 4: pico4-session starts the Frame's session for its user without a display
+# manager; Monado as a system service for driver_monado; SteamVR's settings, the room view, the lens panel,
+# the first run's introduction and setup, SteamVR's and Steam's drop-ins, the VR CPU limits, the kernel
+# threads' priorities, the Frame's polkit helpers and updater answered for this headset, and the session's
+# SteamVR files (/usr/share/pico4: settings, openvrpaths, the Frame controller's layout), which the image's
+# build puts into the user's home and SteamVR's remapping. The preset enables the session; the tests run in
+# the build.
+pkgname=pico4-session
+pkgver=1
+pkgrel=1
+pkgdesc="PICO 4 session: Valve's VR session started without a display manager, with SteamVR and Steam set up for the PICO 4"
+arch=(any)
+url="https://github.com/overpressure/overpressure/tree/main/devices/phoenix/docs"
+license=(Unlicense)
+depends=(bash python systemd)
+backup=(etc/pam.d/pico4-session
+        etc/pico4/session.pam-env
+        etc/systemd/system/rtkit-daemon.service.d/rtkit-limits.conf
+        etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf)
+source=(pico4-session
+        session.pam-env
+        rtkit-limits.conf
+        50-pico4-restart-limit.conf
+        atomupd-manager
+        displays_turn_off_drm_master
+        steamos-set-timezone
+        steamos-update
+        pico4-kthread-priorities.service
+        pico4-monado.service
+        pico4-monado.socket
+        pico4-session.service
+        pico4-vr-performance.service
+        gamescope-session.service.d-50-pico4.conf
+        pico4-lens-panel.service
+        pico4-onboarding.service
+        pico4-roomview.service
+        pico4-steamvr-failed.service
+        steam.service.d-50-pico4.conf
+        55-pico4-first-run.conf
+        steamvr.service.d-50-pico4.conf
+        52-pico4-roomview.conf
+        53-pico4-lens-panel.conf
+        54-pico4-onboarding.conf
+        pico4-steamos.conf
+        kthread-priorities
+        monado-service
+        session
+        steam-language
+        steam-proton-mapping
+        steamvr-ended
+        steamvr-settings
+        vr-performance
+        wait-first-run
+        50-pico4-timezone.rules
+        frame-controller-remapping.json
+        openvrpaths.vrpath
+        steamvr.vrsettings
+        50-pico4-session.preset
+        test_session_units.py
+        test_steamvr_settings.py
+        test_steam_proton_mapping.py
+        test_vr_performance.py
+        test_first_run_setup.py
+        test_atomupd.py)
+sha256sums=('6dd8cda751033318aca350f3dbbed8a29860431777488b4acc042e8f1b9572b3'
+            '312fa36fde05ce021496965bd33fe9df9e5423538541ea2f61dddc77253aa1aa'
+            '3f3639e206a29d8748c1eeccea22b6389592910080d021466b8add37ff1b8d37'
+            'a96ee79d5766401ec59d5b94063c53d86d53d303f605749527b20cfa2b783967'
+            '03b8ffb804f75a4766346ccd469dfb7ae54223eaf6093f31d3ff587c7ab55acc'
+            '5d3bfa59d64fbaf1061df18441ca75ac9a99ece20184a123d6b2b0732e7700d7'
+            '33cf59c115dff830bacc5eb09d90aae01209413b43ef5542cd99aab95fc6d406'
+            'e63a107b301db08e3380e56e3c38bd967ff1c69574f9ae74a54a90a2e37214eb'
+            '2026a0992189880658e73695f064c625106bd24fbe3b60b84dd6344c79dbed7b'
+            '6a4d221660ccd634aff1489af9e4a907e7d7634e21d12480c61dfd8d69a47c27'
+            '47e076f445ff23f3e298827305df1d4ae9289db72cc3df322b3f84d1084e425b'
+            '96c341eddba0622f19b078a81a4febe960e45d3ea5e0eed86891221a9176a5ec'
+            '602007dd743608f512f32c065ac862bb67ebf572a495943f2e28c878887b59ed'
+            '26315b666d39b0b0bd45fa111125372b6a4f960d7d9e878e4c6d0e2344a5914b'
+            '1fb0a543a0b3225ae025d8f05ce706a82d1a28ea613afefa4b68324debd1b6e9'
+            '4d11980af4e5fe4ab70d9526b8a7f5e19aa6385d788fcd3dfb0e21d43b5f985c'
+            '08c94b2d813787262e686bd4b04113b536292bbda6a61332fded3227e03ae5f1'
+            '6a27facb78cf11b3ada2d88efc340c1114b4747a76a93782ca41db50b3af848f'
+            '552df4f4973a5f2f336b1705f9aa678e270c20b211a31bad0f56ab5fd28b40c7'
+            '0a03ed543c526dd4fed3b3354e381895fdb262c1f1da023a27371d752246304b'
+            '964f3cd570156b50409418e15e55ddd40837d4f2aa6577ad1c79c3eb571da35a'
+            'a9ee51a475a8bd527571fa2e36d041ba524ae90f263f3bb7b41246599e50b7e6'
+            'b4921874e087cf9dc1be13ea29b1c4c14839be72d93caeda3a75732630e180d5'
+            'c41213e8ac3185d838d01b9addcdb24833094f1920f05c6acd90b4a5a15ba02f'
+            'c6b8afb5512eefc540c194e288a21214153a470cc7e4e7053526da0ee63ce744'
+            'dc79f563ac46c680ff26a52d01a97ac3e1fb47c748ab52e52465316f9fb105de'
+            '558048fb79304748a7fb83bf8c57dab7514e95dd746edf6e163b8fbae22e5722'
+            'fe2b6c43191914059fdce77beaef130d6cb10b192094b1fcb81bef7c956b4579'
+            '76ef95a4f1ebb629b04d8d5df882e681f15ab2ad11f19941c50fe4c79c5dddeb'
+            'cb5395cf33923315d8e3e7ab562e43fb144169dab5d676528b6d2cc127bc1ab5'
+            '9c45806949ab66765b9bf48070616e5aa4ad23613e15ffa2e56cfe663aac7b20'
+            'aba5b1ad42e2b45361de4db3d5f4adfe590027b590dfc3979c3f1f54b4e1410f'
+            '4b4e905dec0723375b9af255225a1c8417fc633314807851cf7edb4d853b317e'
+            '54fcd4dd29bd83a5fed18e801014343764d9121caf9379fe5f058301110cb984'
+            'bb98e4cdcb830378eac146680f815de362097e217da8a474c682606e694aed98'
+            '5a154fdb20619c372a353ab650aa7a55048a31860590c823a33f55ea01f7242b'
+            '93975c1d0aadb1c988c8b85c15ec7b3df3e4319f232058ab12b1fe0409aab945'
+            '5d9ff1a34c566235fc9096add9df814e45f7fcc04f21595bbdeec5d6176119f4'
+            '7b6ddf3bab19be7597adb3d50c478b5ee0b86b34fbef504fedf5a0c4d9902c01'
+            '6ce2227e9301ad624d329e22ee3807cdc000b371cd33d46b0f1e883034bf069e'
+            '6d82af321ff0d4987f0c8e58f02b8d0bce90904b9e53c6d7321d478bfeac805f'
+            '6ec565db07ed8b08cdfac49afada3f319a4c010c225635fb6062c6f5310f3883'
+            '0cad7e5a5a01e3213fb5f576675c2dc47c00c0e4a375a8b4dba297ec7b01b27f'
+            'ccabb9a4cbb4620ebb0ad7c4789a7c0f6bbfddcc51d572a188659822f6d4b08a'
+            'd85867161e666fdec3ea8b632d200ec8d8e5944455dfedd25c9056802e0e5637')
+
+build() {
+  python3 -B -m unittest test_session_units test_steamvr_settings test_steam_proton_mapping test_vr_performance test_first_run_setup test_atomupd
+}
+
+package() {
+  install -Dm644 pico4-session "$pkgdir/etc/pam.d/pico4-session"
+  install -Dm644 session.pam-env "$pkgdir/etc/pico4/session.pam-env"
+  install -Dm644 rtkit-limits.conf "$pkgdir/etc/systemd/system/rtkit-daemon.service.d/rtkit-limits.conf"
+  install -Dm644 50-pico4-restart-limit.conf "$pkgdir/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf"
+  install -Dm755 atomupd-manager "$pkgdir/usr/bin/atomupd-manager"
+  install -Dm755 displays_turn_off_drm_master "$pkgdir/usr/bin/displays_turn_off_drm_master"
+  install -Dm755 steamos-set-timezone "$pkgdir/usr/bin/steamos-polkit-helpers/steamos-set-timezone"
+  install -Dm755 steamos-update "$pkgdir/usr/bin/steamos-polkit-helpers/steamos-update"
+  install -Dm644 pico4-kthread-priorities.service "$pkgdir/usr/lib/systemd/system/pico4-kthread-priorities.service"
+  install -Dm644 pico4-monado.service "$pkgdir/usr/lib/systemd/system/pico4-monado.service"
+  install -Dm644 pico4-monado.socket "$pkgdir/usr/lib/systemd/system/pico4-monado.socket"
+  install -Dm644 pico4-session.service "$pkgdir/usr/lib/systemd/system/pico4-session.service"
+  install -Dm644 pico4-vr-performance.service "$pkgdir/usr/lib/systemd/system/pico4-vr-performance.service"
+  install -Dm644 gamescope-session.service.d-50-pico4.conf "$pkgdir/usr/lib/systemd/user/gamescope-session.service.d/50-pico4.conf"
+  install -Dm644 pico4-lens-panel.service "$pkgdir/usr/lib/systemd/user/pico4-lens-panel.service"
+  install -Dm644 pico4-onboarding.service "$pkgdir/usr/lib/systemd/user/pico4-onboarding.service"
+  install -Dm644 pico4-roomview.service "$pkgdir/usr/lib/systemd/user/pico4-roomview.service"
+  install -Dm644 pico4-steamvr-failed.service "$pkgdir/usr/lib/systemd/user/pico4-steamvr-failed.service"
+  install -Dm644 steam.service.d-50-pico4.conf "$pkgdir/usr/lib/systemd/user/steam.service.d/50-pico4.conf"
+  install -Dm644 55-pico4-first-run.conf "$pkgdir/usr/lib/systemd/user/steam.service.d/55-pico4-first-run.conf"
+  install -Dm644 steamvr.service.d-50-pico4.conf "$pkgdir/usr/lib/systemd/user/steamvr.service.d/50-pico4.conf"
+  install -Dm644 52-pico4-roomview.conf "$pkgdir/usr/lib/systemd/user/steamvr.service.d/52-pico4-roomview.conf"
+  install -Dm644 53-pico4-lens-panel.conf "$pkgdir/usr/lib/systemd/user/steamvr.service.d/53-pico4-lens-panel.conf"
+  install -Dm644 54-pico4-onboarding.conf "$pkgdir/usr/lib/systemd/user/steamvr.service.d/54-pico4-onboarding.conf"
+  install -Dm644 pico4-steamos.conf "$pkgdir/usr/lib/sysusers.d/pico4-steamos.conf"
+  install -Dm755 kthread-priorities "$pkgdir/usr/libexec/pico4/kthread-priorities"
+  install -Dm755 monado-service "$pkgdir/usr/libexec/pico4/monado-service"
+  install -Dm755 session "$pkgdir/usr/libexec/pico4/session"
+  install -Dm755 steam-language "$pkgdir/usr/libexec/pico4/steam-language"
+  install -Dm755 steam-proton-mapping "$pkgdir/usr/libexec/pico4/steam-proton-mapping"
+  install -Dm755 steamvr-ended "$pkgdir/usr/libexec/pico4/steamvr-ended"
+  install -Dm755 steamvr-settings "$pkgdir/usr/libexec/pico4/steamvr-settings"
+  install -Dm755 vr-performance "$pkgdir/usr/libexec/pico4/vr-performance"
+  install -Dm755 wait-first-run "$pkgdir/usr/libexec/pico4/wait-first-run"
+  install -Dm644 50-pico4-timezone.rules "$pkgdir/usr/share/polkit-1/rules.d/50-pico4-timezone.rules"
+  install -Dm644 frame-controller-remapping.json "$pkgdir/usr/share/pico4/frame-controller-remapping.json"
+  install -Dm644 openvrpaths.vrpath "$pkgdir/usr/share/pico4/openvrpaths.vrpath"
+  install -Dm644 steamvr.vrsettings "$pkgdir/usr/share/pico4/steamvr.vrsettings"
+  install -Dm644 50-pico4-session.preset -t "$pkgdir/usr/lib/systemd/system-preset"
+}
