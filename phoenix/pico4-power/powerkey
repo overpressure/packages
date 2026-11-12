@@ -1,0 +1,147 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Unlicense
+"""The power key as on PICO OS (docs/install.md#power-key).
+
+PICO OS's window manager puts the headset to sleep on a short press (screen off, then the
+kernel's suspend) and shuts it down without asking when the key is held 2 s (its resolved
+long-press behaviour, factory.long_press_power_off=1). Here a short press suspends
+(systemctl suspend: the key wakes the headset again) and a 2 s hold powers off. logind leaves
+the key alone (HandlePowerKey=ignore, HandlePowerKeyLongPress=ignore).
+
+    powerkey [--dry-run]
+"""
+
+from __future__ import annotations
+
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+KEY_POWER = 116
+EV_KEY = 1
+EVENT = struct.Struct("qqHHi")  # struct input_event on a 64-bit kernel
+LONG_PRESS_S = 2.0  # PICO OS's config_globalActionsKeyTimeout
+SETTLE_S = 1.0  # events this soon after waking belong to the wake-up press
+POLL_S = 1.0  # how soon a resume without a key event (the RTC) is noticed
+INPUTS = Path("/sys/class/input")
+
+
+def slept() -> float:
+    """Return the seconds spent suspended since boot: CLOCK_BOOTTIME counts them, CLOCK_MONOTONIC does not."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+
+
+#: The PMIC's power-on key.
+KEY_DEVICE = "pm8941_pwrkey"
+
+
+def key_device(inputs: Path = INPUTS) -> str | None:
+    """Find the PMIC's power-on key among the input devices."""
+    for name in sorted(inputs.glob("event*/device/name")):
+        if name.read_text(encoding="ascii", errors="replace").strip() == KEY_DEVICE:
+            return "/dev/input/" + name.parent.parent.name
+    return None
+
+
+def act(action: str, *, dry_run: bool) -> None:
+    """Run systemctl's ACTION (suspend or poweroff), or only report it."""
+    print(f"powerkey: {action}", flush=True)
+    if not dry_run:
+        subprocess.run(["systemctl", action], check=False)  # noqa: S603, S607  # systemctl from PATH, fixed actions
+
+
+class Key:
+    """Turns press/release events into PICO OS's two actions."""
+
+    def __init__(self) -> None:
+        """Start with the key released."""
+        self.pressed_at: float | None = None
+
+    def event(self, value: int, now: float) -> str | None:
+        """Return the action for a key event (1 press, 0 release) at monotonic time now, or None."""
+        if value == 1:
+            self.pressed_at = now
+        elif value == 0 and self.pressed_at is not None:
+            held = now - self.pressed_at
+            self.pressed_at = None
+            if held < LONG_PRESS_S:
+                return "suspend"
+        return None
+
+    def timeout(self, now: float) -> tuple[float | None, str | None]:
+        """Return the seconds until a held key becomes a long press (None if not pressed); the action when due."""
+        if self.pressed_at is None:
+            return None, None
+        left = self.pressed_at + LONG_PRESS_S - now
+        if left > 0:
+            return left, None
+        self.pressed_at = None
+        return None, "poweroff"
+
+
+class Waking:
+    """The press that woke the headset: key events within SETTLE_S of a resume belong to it.
+
+    A resume is noticed when it happens, also without a key event (the RTC woke it): noticed only
+    at the next key event, any later press would count as the wake-up press and be lost.
+    """
+
+    def __init__(self, asleep: float) -> None:
+        """Start from ASLEEP, the seconds slept since boot."""
+        self.asleep = asleep
+        self.quiet_until = 0.0
+
+    def update(self, now: float, asleep: float) -> bool:
+        """Return True when the headset slept since the last call (asleep: seconds slept since boot)."""
+        if asleep > self.asleep + 0.5:
+            self.asleep = asleep
+            self.quiet_until = now + SETTLE_S
+            return True
+        return False
+
+    def quiet(self, now: float) -> bool:
+        """Tell whether key events at NOW still belong to the wake-up press."""
+        return now < self.quiet_until
+
+
+def main(argv: Sequence[str]) -> int | None:
+    """Watch the power key for good."""
+    dry_run = "--dry-run" in argv
+    path = key_device()
+    if path is None:
+        print(f"powerkey: no input device {KEY_DEVICE}", file=sys.stderr)
+        return 1
+    fd = os.open(path, os.O_RDONLY)
+    key = Key()
+    waking = Waking(slept())
+    while True:
+        wait, action = key.timeout(time.monotonic())
+        if action is not None:
+            act(action, dry_run=dry_run)
+            continue
+        ready, _, _ = select.select([fd], [], [], POLL_S if wait is None else min(wait, POLL_S))
+        now = time.monotonic()
+        if waking.update(now, slept()):
+            key.pressed_at = None
+        if not ready:
+            continue
+        data = os.read(fd, EVENT.size * 16)
+        for i in range(0, len(data) - EVENT.size + 1, EVENT.size):
+            _, _, etype, code, value = EVENT.unpack_from(data, i)
+            if etype != EV_KEY or code != KEY_POWER or waking.quiet(now):
+                continue
+            action = key.event(value, now)
+            if action is not None:
+                act(action, dry_run=dry_run)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

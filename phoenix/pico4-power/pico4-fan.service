@@ -1,0 +1,19 @@
+# Fan control (docs/cooling.md): the fan on the lens-motor MCU (ttyHS1), driven
+# from the CPU and GPU sensors with PICO OS's table, plus full speed from
+# 95 °C. Settings (PICO4_FAN_PROFILE, PICO4_FAN_TABLE, PICO4_FAN_BOOST) go in
+# /etc/pico4/fan.conf. When the service stops, the fan keeps its duty.
+# The condition is the fan's UART, by its sysfs entry.
+[Unit]
+Description=PICO 4 fan control
+ConditionPathExists=/sys/class/tty/ttyHS1
+
+[Service]
+EnvironmentFile=-/etc/pico4/fan.conf
+ExecStart=/usr/bin/pico4-fan run
+RuntimeDirectory=pico4-fan
+RuntimeDirectoryPreserve=yes
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

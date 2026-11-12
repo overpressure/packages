@@ -1,0 +1,4 @@
+# The fan, the battery guard and the power key run from the start.
+enable pico4-fan.service
+enable pico4-battery-guard.service
+enable pico4-powerkey.service

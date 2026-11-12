@@ -1,0 +1,41 @@
+# The PICO 4's power and heat as PICO OS handles them: the fan on the lens-motor MCU, driven from the CPU
+# and GPU sensors with PICO OS's table (pico4-fan); the power-off at a low or hot battery (battery-guard);
+# the power key, a short press to suspend and a 2 s hold to power off (powerkey, with logind leaving
+# the key alone). The preset enables the three services; the tests run in the build.
+pkgname=pico4-power
+pkgver=1
+pkgrel=1
+pkgdesc="PICO 4 fan control, battery guard and power key, as on PICO OS"
+arch=(any)
+url="https://github.com/overpressure/overpressure/blob/main/devices/phoenix/docs/cooling.md"
+license=(Unlicense)
+depends=(python systemd)
+source=(pico4-fan pico4-fan.service
+        battery-guard pico4-battery-guard.service
+        powerkey pico4-powerkey.service 50-pico4-power-key.conf
+        50-pico4-power.preset
+        test_fan.py test_battery_guard.py test_power_key.py)
+sha256sums=('b7ed9864583e37cc0da28ac2d4e257d52f1a651efc39d54267bc8e7798b8edbd'
+            '2d337cfee38033e97eafbbe0fa9a27b445b32b91c1f59b77d1f0358c6dfbcc93'
+            '9956f154529309f757d0501dcb5387c735b046dff87539b7bb15a216c51c3a9f'
+            'a2533cfaec6db8847244dc641eeef5fbc11b962be8cc52ba3c86950868003f13'
+            'b418cb19ac9ec4367e5a8e0661dda65688fb4e91c62d23e47c362069a04b2437'
+            '19f248403bfba342c224978e08895a450327c4d47d7aa7e1d8e201e406d53cf5'
+            'fccd2ff01aa3835c45a63fe7e2ef894b51d9008b04bf4f2214659a6788e6764d'
+            '96909ecb295fe2f72e5967f279a468d2670a9b514c261ee8fbdf42035dc98aa7'
+            'acf92dea11c72597ede2165c4384ce403134c2e03d5a292b9fdaf66af9a0126d'
+            '5f5df141aef42f012da84adb920ac3db4e4a8620bc1dd0059d88fc8579f43251'
+            'e403426890c10267a02693e04e06ddbbfc0be30fd3130aa089e2b80c921d1886')
+
+build() {
+  python3 -B -m unittest test_fan test_battery_guard test_power_key
+}
+
+package() {
+  install -Dm755 pico4-fan -t "$pkgdir/usr/bin"
+  install -Dm755 battery-guard powerkey -t "$pkgdir/usr/libexec/pico4"
+  install -Dm644 pico4-fan.service pico4-battery-guard.service pico4-powerkey.service \
+    -t "$pkgdir/usr/lib/systemd/system"
+  install -Dm644 50-pico4-power-key.conf -t "$pkgdir/usr/lib/systemd/logind.conf.d"
+  install -Dm644 50-pico4-power.preset -t "$pkgdir/usr/lib/systemd/system-preset"
+}

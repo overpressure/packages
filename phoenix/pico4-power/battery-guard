@@ -1,0 +1,130 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Unlicense
+"""A clean power-off at PICO OS's battery levels and temperature (docs/cooling.md#hardware-limits).
+
+PICO OS's BatteryService (ExtBatteryServiceImpl, shouldShutdownLocked,
+checkLowPowerByScreenState, shutdownIfOverTempLocked and checkBatteryStatus in services.jar) shuts
+down without asking:
+
+- below 1 %, also while charging;
+- with the screen off and not charging: at 4 % or less when the level has fallen since the
+  screen went off, and 60 s after the screen went off at 4 % or less;
+- with the battery above 59.0 °C, also while charging, after a notice from 58.0 °C.
+
+The screen here is the panels' backlight, which standby switches (bl_power).
+
+    battery-guard [--dry-run]
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+CAPACITY = "/sys/class/power_supply/battery/capacity"
+STATUS = "/sys/class/power_supply/battery/status"
+TEMP = "/sys/class/power_supply/battery/temp"  # tenths of °C, from the fuel gauge
+BACKLIGHT = "/sys/class/backlight/pico4-panel/bl_power"
+EMPTY = 1  # % : shouldShutdownLocked's batteryLevel < 1
+SCREEN_OFF_LEVEL = 4  # % : MIN_BATTERY_LEVEL_SHUTDOWN
+SCREEN_OFF_DELAY = 60.0  # s : checkLowPowerByScreenState's delayed shutdown
+HOT_NOTICE = 580  # 0.1 °C : checkBatteryStatus's warning
+HOT_SHUTDOWN = 590  # 0.1 °C : shutdownIfOverTempLocked, temperature above it
+POLL = 5.0  # s : as often as the session reads the battery
+
+
+@dataclass
+class Guard:
+    """PICO OS's decision from the level, the charger's status and the screen."""
+
+    screen_on: bool = True
+    off_level: int | None = None  # the level when the screen went off
+    deadline: float | None = None  # the delayed shutdown, on the monotonic clock
+    warned: bool = False  # the hot notice was given and the battery has not cooled below it since
+
+    def notice(self, temp: int | None) -> str | None:
+        """Return the hot notice once each time the battery reaches it."""
+        if temp is None:
+            return None
+        if temp < HOT_NOTICE:
+            self.warned = False
+            return None
+        if self.warned:
+            return None
+        self.warned = True
+        return f"battery at {temp / 10:.1f} °C: PICO OS powers off above {HOT_SHUTDOWN / 10:.1f} °C"
+
+    def step(self, level: int, status: str, *, screen_on: bool, now: float, temp: int | None = None) -> str | None:
+        """Say why to power off now, or return None."""
+        charging = status == "Charging"
+        if temp is not None and temp > HOT_SHUTDOWN:
+            return f"battery at {temp / 10:.1f} °C" + (", charging" if charging else "")
+        if screen_on != self.screen_on:
+            self.screen_on = screen_on
+            self.off_level = None if screen_on else level
+            self.deadline = (
+                now + SCREEN_OFF_DELAY if not (screen_on or charging) and level <= SCREEN_OFF_LEVEL else None
+            )
+        if level < EMPTY:
+            return f"battery at {level} %" + (", charging" if charging else "")
+        if charging:
+            return None
+        if self.deadline is not None and now >= self.deadline:
+            return f"battery at {level} %, screen off for {SCREEN_OFF_DELAY:.0f} s"
+        if not screen_on and level <= SCREEN_OFF_LEVEL and self.off_level is not None and level < self.off_level:
+            return f"battery at {level} %, was {self.off_level} % when the screen went off"
+        return None
+
+
+def read(path: str) -> str | None:
+    """Read a sysfs file, None when it is missing or unreadable."""
+    try:
+        return Path(path).read_text(encoding="ascii", errors="replace").strip()
+    except OSError:
+        return None
+
+
+def temperature(text: str | None) -> int | None:
+    """Parse the driver's temperature, None when it has none (no reading from the gauge yet)."""
+    try:
+        return int(text) if text is not None else None
+    except ValueError:
+        return None
+
+
+def check(
+    guard: Guard, now: float, reader: Callable[[str], str | None] = read, say: Callable[[str], object] = print
+) -> str | None:
+    """One reading of the sysfs files; an unreadable battery decides nothing, no panel driver means screen on."""
+    temp = temperature(reader(TEMP))
+    message = guard.notice(temp)
+    if message:
+        say(f"battery-guard: {message}")
+    level, status = reader(CAPACITY), reader(STATUS)
+    if status is None or level is None or not level.isdigit():
+        return None
+    return guard.step(int(level), status, screen_on=reader(BACKLIGHT) in (None, "0"), now=now, temp=temp)
+
+
+def main(argv: Sequence[str]) -> int:
+    """Poll the battery for good, powering off when PICO OS would."""
+    dry_run = "--dry-run" in argv
+    guard = Guard()
+    while True:
+        reason = check(guard, time.monotonic(), say=lambda line: print(line, flush=True))
+        if reason:
+            print(f"battery-guard: {reason}: powering off", flush=True)
+            if not dry_run:
+                subprocess.run(["systemctl", "poweroff"], check=False)  # noqa: S607  # systemctl from PATH, as every unit
+        time.sleep(POLL)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

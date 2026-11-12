@@ -66,6 +66,9 @@ overpressure-phoenix/pico4-graphics-tests
 overpressure-sm8250/sm8250-hexagonrpc
 python
 
+# Project-built: fan control, battery guard and power key, as on PICO OS (docs/cooling.md)
+overpressure-phoenix/pico4-power
+
 # Project-built: Monado OpenXR runtime with the PICO 4 head-tracking driver, and
 # Basalt as its SLAM backend for 6DoF (docs/xr.md)
 overpressure-phoenix/pico4-monado
