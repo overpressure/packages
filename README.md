@@ -38,7 +38,9 @@ overpressure's userspace build assembles the image from this definition.
 
 The build runs as root in overpressure's build image ([overpressure/builder](https://github.com/overpressure/builder)),
 pinned by digest. Its environment is the Holo Core aarch64 preview, pinned by hash, with the packages the
-recipes build against from the headset's repositories. The releases are built on arm64, where everything
+recipes build against from the headset's repositories. Every one of them is pinned: by the headset's
+`packages.lock` (version and SHA-256), or by the Holo snapshot when the image does not install it. The
+Frame's repository is not a snapshot; when it moves, the build stops until the lock follows. The releases are built on arm64, where everything
 runs natively with the environment's GCC. On an x86-64 computer the image's clang and lld compile inside
 it and its other programs run under QEMU (`OVERPRESSURE_BINFMT=1` registers QEMU): packages for trying a
 change, not the releases' bytes.
@@ -50,8 +52,10 @@ docker run --rm --privileged -e OVERPRESSURE_BINFMT=1 -v "$PWD:/work" -w /work \
 ```
 
 `out/<layer>/` then holds the layer's packages and its database `overpressure-<layer>.db`, and
-`out/sources/` the complete sources of the GPL and LGPL packages. The build folder is kept: a second
-run rebuilds only the recipes whose folder changed. Named packages after the folders build only those.
+`out/sources/` the complete sources of the GPL and LGPL packages; a failed build leaves its logs in
+`out/logs/`. The build folder is kept: a second run rebuilds only the recipes whose folder changed.
+Named packages after the folders build only those, without the databases; `--databases` writes the
+databases from the packages in `out/`.
 From a checkout of overpressure, `python -m overpressure container run -- bash ...` runs the same image.
 
 ```sh
@@ -61,10 +65,14 @@ shellcheck build/*.sh
 
 ## Releases
 
-Every push and pull request builds each headset's packages on an arm64 runner
-([packages.yml](.github/workflows/packages.yml)). A tag `YYYY.MM.DD` (or `YYYY.MM.DD.N`) builds them twice,
-on two runners, and publishes them only when both builds made the same packages, byte for byte: every
-layer's packages and database, the copyleft packages' sources and `SHA256SUMS`. The release's download folder is a pacman server for
+Every push and pull request builds each package in its own job on an arm64 runner
+([packages.yml](.github/workflows/packages.yml)); one job then writes each layer's database. A package's
+key ([build/plan.py](build/plan.py)) hashes everything its bytes depend on: its recipe folder,
+`build/packages.sh`, the build image's digest and the headset's definition. A key built before comes
+from the cache, so a change rebuilds only the packages it touches. A tag `YYYY.MM.DD` (or `YYYY.MM.DD.N`)
+builds every package twice, on two runners and without the cache, and publishes them only when both
+builds made the same packages, byte for byte: every layer's packages and database, the copyleft
+packages' sources and `SHA256SUMS`. The release's download folder is a pacman server for
 every layer:
 
 ```ini

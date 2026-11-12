@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: Unlicense
-# Every push and pull request: the layout checked, then each headset's packages built natively on arm64
-# in overpressure's build image, pinned by digest. A tag (YYYY.MM.DD, or YYYY.MM.DD.N) builds them twice,
-# on two runners, and publishes them as a release only when both builds made the same packages: per
-# layer its packages and its database, and the copyleft packages' complete sources. A release's download
-# folder is a pacman server for every layer.
+# Every push and pull request: the layout checked, then every package of the headsets' layers built in
+# its own job, natively on arm64, in overpressure's build image pinned by digest. A package whose key
+# (build/plan.py: its recipe, the build script, the image, the headset's definition) was built before
+# comes from the cache. One job then writes each layer's database.
+# A tag (YYYY.MM.DD, or YYYY.MM.DD.N) builds every package twice, on two runners and without the cache,
+# and publishes them as a release only when both builds made the same packages: per layer its packages and
+# its database, and the copyleft packages' complete sources. A release's download folder is a pacman
+# server for every layer.
 name: Packages
 
 on:
@@ -22,6 +25,8 @@ concurrency:
 
 env:
   BUILDER: ghcr.io/overpressure/builder:2026.11.12@sha256:ba4a5ec8adb886b60b873b28d7d6454abd40c1a58d08a6f6fd7d5efc65d8e4b2
+  HEADSETS: phoenix
+  RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   layout:
@@ -29,40 +34,97 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    outputs:
+      packages: ${{ steps.plan.outputs.packages }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Layers, recipes and image definitions
         run: python3 -m unittest -v
       - name: The build script
         run: shellcheck build/*.sh
+      - name: The packages to build
+        id: plan
+        run: |
+          packages=$(python3 build/plan.py --builder "$BUILDER" $HEADSETS)
+          echo "$packages" | python3 -m json.tool
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
 
-  packages:
+  package:
     needs: layout
+    name: ${{ matrix.package.layer }}/${{ matrix.package.name }} (${{ matrix.build }})
     strategy:
       fail-fast: false
       matrix:
-        headset: [phoenix]
+        package: ${{ fromJSON(needs.layout.outputs.packages) }}
         build: ${{ fromJSON(startsWith(github.ref, 'refs/tags/') && '["a", "b"]' || '["a"]') }}
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 240
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      KEY: package-${{ matrix.package.headset }}-${{ matrix.package.name }}-${{ matrix.package.key }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: The cached build
+        id: cache
+        if: env.RELEASE != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out
+          key: ${{ env.KEY }}
+      - name: The package
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm --privileged -v "$PWD:/work" -w /work "$BUILDER" \
+            bash build/packages.sh "${{ matrix.package.headset }}" /var/tmp/packages /work/out "${{ matrix.package.name }}"
+      - name: Its logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-${{ matrix.package.headset }}-${{ matrix.package.name }}-${{ matrix.build }}
+          path: out/logs/
+      - name: Kept for the next build
+        if: steps.cache.outputs.cache-hit != 'true' && env.RELEASE != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out
+          key: ${{ env.KEY }}
+      - run: ls -lR out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-${{ matrix.package.headset }}-${{ matrix.package.name }}-${{ matrix.build }}
+          path: out/
+          if-no-files-found: error
+
+  databases:
+    needs: package
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: The packages
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: package-*-a
+          path: out
+          merge-multiple: true
+      - name: Each layer's database
         run: |
-          docker run --rm --privileged -v "$PWD:/work" -w /work "$BUILDER" \
-            bash build/packages.sh "${{ matrix.headset }}" /var/tmp/packages /work/out
+          for headset in $HEADSETS; do
+            docker run --rm --privileged -v "$PWD:/work" -w /work "$BUILDER" \
+              bash build/packages.sh --databases "$headset" /var/tmp/packages /work/out
+          done
           ls -lR out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: packages-${{ matrix.headset }}-${{ matrix.build }}
+          name: packages
           path: out/
           if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: packages
+    needs: databases
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -70,22 +132,24 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: packages-*
-          path: artifacts
+          name: packages
+          path: packages
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: package-*-b
+          path: second
+          merge-multiple: true
       - name: The release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Both builds of a headset made the same packages, byte for byte.
-          for a in artifacts/packages-*-a; do
-            b=${a%-a}-b
-            diff <(cd "$a" && find . -name '*.pkg.tar.zst' | sort) <(cd "$b" && find . -name '*.pkg.tar.zst' | sort)
-            (cd "$a" && find . -name '*.pkg.tar.zst' -print0 | xargs -0 sha256sum) | (cd "$b" && sha256sum --check --quiet)
-          done
-          # Headsets that share a layer build its packages alike: one file per name, or the release stops.
+          # The second build made the same packages, byte for byte.
+          diff <(cd packages && find . -name '*.pkg.tar.zst' | sort) <(cd second && find . -name '*.pkg.tar.zst' | sort)
+          (cd packages && find . -name '*.pkg.tar.zst' -print0 | xargs -0 sha256sum) | (cd second && sha256sum --check --quiet)
+          # One file per name: headsets that share a layer build its packages alike, or the release stops.
           mkdir release
-          find artifacts/packages-*-a -type f -print0 | while IFS= read -r -d '' f; do
+          find packages -type f -print0 | while IFS= read -r -d '' f; do
             n=release/$(basename "$f")
             if [ -e "$n" ]; then cmp -s "$f" "$n" || { echo "two different $n" >&2; exit 1; }; else cp "$f" "$n"; fi
           done
