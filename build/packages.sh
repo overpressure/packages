@@ -14,6 +14,8 @@
 #          the complete sources of the copyleft (GPL, LGPL) packages, from makepkg --allsource.
 # PACKAGE  only these packages, without the databases (default: every package of the headset's layers).
 # --databases  only each layer's database, from the packages already in OUTDIR/LAYER/.
+# OVERPRESSURE_REFRESH=1  the newest package databases, and what moved since the lock reported instead
+#          of stopping the build (an upgrade check).
 #
 # The build environment is Valve/Collabora's Holo Core aarch64 preview rootfs (pinned by hash), with the
 # packages the recipes build against from the headset's repositories. Each of them is pinned: by
@@ -152,7 +154,11 @@ pins() {
             unpinned+=("$name $version (neither in the lock nor in Holo's $HOLO_SNAPSHOT)")
         fi
     done < <(in_b pacman -Q)
-    if [[ ${#unpinned[@]} -gt 0 ]]; then
+    if [[ ${#unpinned[@]} -gt 0 && -n ${OVERPRESSURE_REFRESH:-} ]]; then
+        printf 'moved since the lock: %s\n' "${unpinned[@]}" >&2
+        log "the build environment has the newest packages"
+        return
+    elif [[ ${#unpinned[@]} -gt 0 ]]; then
         printf 'unpinned in the build environment: %s\n' "${unpinned[@]}" >&2
         echo "headsets/$headset/packages.lock does not pin these: update it with overpressure's userspace build (--update-lock)" >&2
         exit 1
@@ -171,7 +177,7 @@ tools() {
     fi
     mapfile -t frame_packages < <(sed -n "s|^$FRAME_REPO/\([^[:space:]#]*\).*|\1|p" "$definition/packages.txt")
     sync=""
-    [[ -s $B/var/lib/pacman/sync/$FRAME_REPO.db ]] || sync=y
+    [[ -s $B/var/lib/pacman/sync/$FRAME_REPO.db && -z ${OVERPRESSURE_REFRESH:-} ]] || sync=y
     builder=("${BUILDER_PACKAGES[@]}")
     for i in "${!builder[@]}"; do
         for f in "${frame_packages[@]}"; do
