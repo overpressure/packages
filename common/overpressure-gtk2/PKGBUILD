@@ -22,8 +22,9 @@ sha256sums=('ac2ac757f5942d318a311a54b0c80b5ef295f299c2a73c632f6bfb1ff49cc6da')
 build() {
   cd "gtk+-$pkgver"
   # A 2020 code base: today's compilers turn some of its warnings into errors.
-  CFLAGS+=" -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types"
-  CFLAGS+=" -Wno-error=implicit-function-declaration -Wno-error=int-conversion"
+  CFLAGS+=" -Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion"
+  # Only clang has this warning, and GCC refuses an unknown -Wno-error= option.
+  [[ ${CC:-cc} == *clang* ]] && CFLAGS+=" -Wno-error=incompatible-function-pointer-types"
   ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --with-xinput=yes \
     --disable-gtk-doc --disable-introspection --disable-cups --disable-papi --disable-static
   # Libtool otherwise adds an rpath and overlinks.
