@@ -72,10 +72,9 @@ Every push and pull request builds each package in its own job on an arm64 runne
 key ([build/plan.py](build/plan.py)) hashes everything its bytes depend on: its recipe folder,
 `build/packages.sh`, the build image's digest and the headset's definition. A key built before comes
 from the cache, so a change rebuilds only the packages it touches. A tag `YYYY.MM.DD` (or `YYYY.MM.DD.N`)
-builds every package twice, on two runners and without the cache, and publishes them only when both
-builds made the same packages, byte for byte: every layer's packages and database, the copyleft
-packages' sources and `SHA256SUMS`. The release's download folder is a pacman server for
-every layer:
+builds every package anew, without the cache, and publishes a release: every layer's packages and
+database, the copyleft packages' sources and `SHA256SUMS`. Released tags never move or disappear (a
+ruleset). The release's download folder is a pacman server for every layer:
 
 ```ini
 [overpressure-common]
