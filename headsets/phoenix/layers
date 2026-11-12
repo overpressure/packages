@@ -1,0 +1,6 @@
+# The PICO 4's layers, the most general first: Valve's Frame userspace on any headset, then the
+# Snapdragon XR2 (SM8250), then the PICO 4 itself. Each layer is a folder of this repository and a
+# pacman repository overpressure-LAYER; pacman.conf lists them the other way round.
+common
+sm8250
+phoenix

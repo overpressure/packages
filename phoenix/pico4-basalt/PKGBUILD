@@ -1,0 +1,62 @@
+# Basalt visual-inertial odometry as Monado's SLAM backend: the VIT shared
+# library (libbasalt.so) that Monado's t_tracker_slam loads at runtime.
+# Monado's Basalt fork, pinned by commit, with only the submodules the library
+# needs (no visualisation, no ROS bag readers). The ARM target is fixed: the
+# default -march=native would describe the build host (QEMU), not the XR2.
+pkgname=pico4-basalt
+pkgver=2.0.1
+pkgrel=3
+arch=(aarch64)
+url="https://gitlab.freedesktop.org/mateosss/basalt"
+license=(BSD-3-Clause)
+depends=(opencv onetbb fmt lz4 gcc-libs glibc)
+makedepends=(git cmake ninja boost)
+_commit=df6e970c8da7636eb401a09e3317fbeaaf829b9a
+source=("basalt::git+https://gitlab.freedesktop.org/mateosss/basalt.git#commit=$_commit"
+        "CLI11::git+https://github.com/CLIUtils/CLI11.git#commit=37bb6edc5317e99af72ef48405e65d9ca5218861"
+        "opengv::git+https://github.com/laurentkneip/opengv.git#commit=91f4b19c73450833a40e463ad3648aae80b3a7f3"
+        "magic_enum::git+https://github.com/Neargye/magic_enum.git#commit=e046b69a3736d314fad813e159b1c192eaef92cd"
+        "basalt-headers::git+https://gitlab.freedesktop.org/mateosss/basalt-headers.git#commit=e6db0fb84c69614bc4923fde6c52154c221c1768"
+        "eigen::git+https://gitlab.com/libeigen/eigen.git#commit=bc3b39870ecb690a623a3f49149a358b95c5781d"
+        "Sophus::git+https://github.com/strasdat/Sophus.git#commit=d0b7315a0d90fc6143defa54596a3a95d9fa10ec"
+        "cereal::git+https://github.com/USCiLab/cereal.git#commit=ebef1e929807629befafbb2918ea1a08c7194554"
+        basalt-realtime-input.patch basalt-vio-config.patch pico4-vio.json)
+sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
+            '8b3702d8b0c419e655783bb98249c5f670a370bbbcde95463a4b4aeb819a4600'
+            'e1dcff17f77d738a6cb369620da0df844e1de55a3ad1adb180cc415fa9590db3'
+            'b3ede56a7d3e83a2e32734753eaeddba1deeceb0c2f0f8c5c84d829ffee64ae1')
+
+_submodules() {
+  local repo=$1
+  shift
+  local path
+  for path in "$@"; do
+    git -C "$repo" submodule init "$path"
+    git -C "$repo" config "submodule.$path.url" "$srcdir/${path##*/}"
+  done
+  git -C "$repo" -c protocol.file.allow=always submodule update "$@"
+}
+
+prepare() {
+  _submodules basalt thirdparty/CLI11 thirdparty/opengv thirdparty/magic_enum thirdparty/basalt-headers
+  _submodules basalt/thirdparty/basalt-headers thirdparty/eigen thirdparty/Sophus thirdparty/cereal
+  # Bounded input queues: poses lagged 0.64 s behind their frames on the PICO 4.
+  patch -d basalt -p1 < basalt-realtime-input.patch
+  # VIO settings from PICO4_BASALT_VIO_CONFIG while the driver supplies the calibration.
+  patch -d basalt -p1 < basalt-vio-config.patch
+}
+
+build() {
+  cmake -S basalt -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_INSTALL_LIBDIR=lib -DCXX_MARCH=armv8.2-a -DBASALT_BUILD_SHARED_LIBRARY_ONLY=ON \
+    -DBASALT_ENABLE_ROSBAG2=OFF -DBASALT_INSTANTIATIONS_DOUBLE=OFF -DBASALT_BUILD_VISUALIZATION=OFF \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 basalt/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  # Basalt's defaults with the PICO 4's changes, loaded by the PICO 4 driver.
+  install -Dm644 pico4-vio.json "$pkgdir/usr/share/pico4-basalt/pico4-vio.json"
+}

@@ -1,0 +1,17 @@
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 7f3b3452..f9bc880a 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -5505,6 +5505,12 @@ get_win_pid(xwayland_ctx_t *ctx, Window id)
+ static void
+ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
+ {
++	// A window reaches the root both by CreateNotify and by ReparentNotify: a second entry for
++	// it would keep the shared override surface after the first entry's surface info lets go of
++	// it, and read it after it is freed (handle_presented_for_window).
++	if (find_win(ctx, id, false))
++		return;
++
+ 	steamcompmgr_win_t				*new_win = new steamcompmgr_win_t{};
+ 	steamcompmgr_win_t				**p;
+ 

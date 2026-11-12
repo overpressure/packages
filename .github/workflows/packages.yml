@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: Unlicense
+# Every push and pull request: the layout checked, then each headset's packages built natively on arm64
+# in overpressure's build image, pinned by digest. A tag (YYYY.MM.DD, or YYYY.MM.DD.N) builds them twice,
+# on two runners, and publishes them as a release only when both builds made the same packages: per
+# layer its packages and its database, and the copyleft packages' complete sources. A release's download
+# folder is a pacman server for every layer.
+name: Packages
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  BUILDER: ghcr.io/overpressure/builder:2026.11.12@sha256:ba4a5ec8adb886b60b873b28d7d6454abd40c1a58d08a6f6fd7d5efc65d8e4b2
+
+jobs:
+  layout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Layers, recipes and image definitions
+        run: python3 -m unittest -v
+      - name: The build script
+        run: shellcheck build/*.sh
+
+  packages:
+    needs: layout
+    strategy:
+      fail-fast: false
+      matrix:
+        headset: [phoenix]
+        build: ${{ fromJSON(startsWith(github.ref, 'refs/tags/') && '["a", "b"]' || '["a"]') }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: The packages
+        run: |
+          docker run --rm --privileged -v "$PWD:/work" -w /work "$BUILDER" \
+            bash build/packages.sh "${{ matrix.headset }}" /var/tmp/packages /work/out
+          ls -lR out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-${{ matrix.headset }}-${{ matrix.build }}
+          path: out/
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write # the release
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: packages-*
+          path: artifacts
+      - name: The release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Both builds of a headset made the same packages, byte for byte.
+          for a in artifacts/packages-*-a; do
+            b=${a%-a}-b
+            diff <(cd "$a" && find . -name '*.pkg.tar.zst' | sort) <(cd "$b" && find . -name '*.pkg.tar.zst' | sort)
+            (cd "$a" && find . -name '*.pkg.tar.zst' -print0 | xargs -0 sha256sum) | (cd "$b" && sha256sum --check --quiet)
+          done
+          # Headsets that share a layer build its packages alike: one file per name, or the release stops.
+          mkdir release
+          find artifacts/packages-*-a -type f -print0 | while IFS= read -r -d '' f; do
+            n=release/$(basename "$f")
+            if [ -e "$n" ]; then cmp -s "$f" "$n" || { echo "two different $n" >&2; exit 1; }; else cp "$f" "$n"; fi
+          done
+          (cd release && sha256sum -- * > SHA256SUMS)
+          {
+            echo "Packages and databases of the layers, and the copyleft packages' sources."
+            echo "A pacman server for every layer: \`Server = https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME\`."
+            echo
+            echo '```'
+            cat release/SHA256SUMS
+            echo '```'
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md release/*

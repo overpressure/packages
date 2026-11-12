@@ -1,0 +1,25 @@
+--- a/src/vit/vit_tracker.cpp
++++ b/src/vit/vit_tracker.cpp
+@@ -45,6 +45,8 @@
+ #include <basalt/vi_estimator/vio_estimator.h>
+ #include <basalt/calibration/calibration.hpp>
+ #include <basalt/vit/vit_tracker.hpp>
++
++#include <cstdlib>
+ #include <vit_implementation_helper.hpp>
+ #include "vit_tracker_ui.hpp"
+ 
+@@ -183,6 +185,13 @@
+ 
+     if (config->file == nullptr) {
+       // For the pipeline to work now, the user will need to use add_cam/imu_calibration
++      // PICO 4: the VIO settings may still come from a file (a full VioConfig JSON); the
++      // calibration stays with the driver.
++      const char *vio = std::getenv("PICO4_BASALT_VIO_CONFIG");
++      if (vio != nullptr && *vio != '\0') {
++        vio_config.load(vio);
++        cout << "Using VIO config " << vio << "\n";
++      }
+       return;
+     }
+ 

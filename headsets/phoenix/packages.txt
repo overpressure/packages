@@ -1,0 +1,161 @@
+# Packages of the PICO 4 SteamOS-compatible userspace (roadmap step 4), with
+# their dependencies resolved by pacman. One name per line; '#' starts a comment.
+# "deckard-arch-hotfixes-release-0.3/<name>" takes the Steam Frame's own build.
+
+# Arch/Holo base system, with the Frame's systemd
+base
+deckard-arch-hotfixes-release-0.3/systemd
+deckard-arch-hotfixes-release-0.3/systemd-libs
+deckard-arch-hotfixes-release-0.3/systemd-sysvcompat
+dbus-broker-units
+polkit
+sudo
+openssh
+iproute2
+e2fsprogs
+less
+zstd
+
+# SteamOS integration as on the Steam Frame
+deckard-arch-hotfixes-release-0.3/steamos-customizations-deckard
+deckard-arch-hotfixes-release-0.3/steamos-manager
+# The Frame's swap: zram at half the RAM through zram-generator (PICO OS swaps to zram
+# the same way)
+deckard-arch-hotfixes-release-0.3/holo-zram-swap
+# The Frame's build: the Steam client's Wi-Fi connections ask for its 802-11-wireless.band "no6"
+deckard-arch-hotfixes-release-0.3/networkmanager
+deckard-arch-hotfixes-release-0.3/libnm
+# The Frame's Wi-Fi backend
+iwd
+# Bluetooth as on the Frame; btmgmt sets the controller's address (pico4-bt-address.service)
+deckard-arch-hotfixes-release-0.3/bluez
+deckard-arch-hotfixes-release-0.3/bluez-utils
+# Battery level and charging state from the kernel's power supply (D-Bus activated)
+upower
+
+# Session, audio and graphics stack of the Frame. gamescope is the Frame's version
+# built here with a fix for a crash when a game starts (overpressure-gamescope).
+overpressure-common/overpressure-gamescope
+libxxf86vm
+deckard-arch-hotfixes-release-0.3/deckard-mesa-linux-aarch64
+# libsensors.so.5, which Valve's Mesa links (gallium's HUD) and does not declare
+lm_sensors
+xorg-xwayland
+deckard-arch-hotfixes-release-0.3/pipewire
+deckard-arch-hotfixes-release-0.3/pipewire-pulse
+deckard-arch-hotfixes-release-0.3/wireplumber
+# PipeWire's ALSA plugin with a fix for capture through a suspend; its pacman hook installs it over
+# pipewire-audio's.
+overpressure-common/overpressure-spa-alsa
+# Real-time priority for PipeWire's audio threads, as on SteamOS: with a session bus PipeWire
+# asks RTKit and stays at normal priority without it, and sounds break up under the session's load
+deckard-arch-hotfixes-release-0.3/rtkit
+# amixer, aplay, arecord, alsaucm: the sound card's checks (docs/userspace.md#audio)
+alsa-utils
+vulkan-icd-loader
+vulkan-tools
+# GL test clients (glxgears, glxinfo, eglinfo): X11 presentation in gamescope
+mesa-utils
+
+# Project-built: the step-3 graphics test
+overpressure-common/overpressure-libdisplay-info
+overpressure-phoenix/pico4-graphics-tests  # elsewhere: the main repository builds it until it moves here
+
+# Project-built: host daemons for the sensor DSP (head IMU, docs/xr.md); python runs
+# the pico4-imu client
+overpressure-sm8250/sm8250-hexagonrpc
+python
+
+# Project-built: Monado OpenXR runtime with the PICO 4 head-tracking driver, and
+# Basalt as its SLAM backend for 6DoF (docs/xr.md)
+overpressure-phoenix/pico4-monado  # elsewhere: the main repository builds it until it moves here
+overpressure-phoenix/pico4-basalt
+# Arch's OpenCV links its highgui module against Qt without depending on it;
+# Monado and Basalt load that module
+qt6-base
+
+# Valve's VR session as on the Steam Frame (docs/session.md): SteamVR for
+# linuxarm64 and the session scripts and user units around gamescope's OpenVR
+# backend. pacman.conf leaves out SteamVR's Frame-only drivers and tools. The
+# "steamvr" script needs jq.
+deckard-arch-hotfixes-release-0.3/deckard-steamvr-session
+deckard-arch-hotfixes-release-0.3/deckard-steamvr-rel
+# Project-built: pacing and scanout usage for SteamVR's compositor (Vulkan layer)
+overpressure-phoenix/pico4-swapchain-usage  # elsewhere: the main repository builds it until it moves here
+# Project-built: Steam Link's client on the PICO 4's video decoder (V4L2 compatibility layer)
+overpressure-phoenix/pico4-vrlink  # elsewhere: the main repository builds it until it moves here
+jq
+# SteamVR's dashboard (vrwebhelper, CEF) links ATK and AT-SPI; gamescope-onready
+# runs xhost and xrdb before it reports the session ready
+at-spi2-core
+xorg-xhost
+xorg-xrdb
+# The Steam client: a 671 MiB bundle; steam.service's steam-health-check unpacks
+# it into the home directory on its first start (2.5 GB), as on the Frame. Its
+# libraries need what the package does not declare: GTK 2 (steamui.so; without
+# it the updated client exits at once; built from source, no aarch64 package
+# carries it) and IBus (steamwebhelper).
+deckard-steam-rel
+overpressure-common/overpressure-gtk2
+# Project-built: MangoHud's mangoapp, the client's performance overlay that gamescope
+# starts; the Frame's build needs libraries of the Frame's private base
+overpressure-common/overpressure-mangohud
+deckard-arch-hotfixes-release-0.3/libibus
+# The session's input method: Valve's ibus-gamescope unit runs ibus-daemon, which
+# takes the text of Steam's on-screen keyboard to the apps.
+deckard-arch-hotfixes-release-0.3/ibus
+# The client polls processes with lsof.
+lsof
+# The client's screen reader, as on the Frame: Valve's Orca, which steamos-manager starts
+# (orca.service) and sets up; it speaks through speech-dispatcher with espeak-ng's voices.
+deckard-arch-hotfixes-release-0.3/orca
+speech-dispatcher
+espeak-ng
+# Android games through Valve's Lepton, as on the Frame (docs/kernel.md): rootless
+# podman (user, PID, UTS and IPC namespaces, binderfs, which a mainline kernel has) with the
+# Frame's passt, Lepton's compatibility files, Valve's Android Mesa (Turnip on msm), the Android
+# and Linux Vulkan layers whose manifests Lepton names, adb, with which it installs and starts the
+# game, "which", with which it finds podman, and inotifywait, with which it waits for Android's
+# boot and the game's exit. Lepton itself comes with Steam, as a compatibility tool. Arch's
+# podman: the Frame's 5.5.2 links gpgme 11, which the base does not have.
+podman
+deckard-arch-hotfixes-release-0.3/passt
+deckard-arch-hotfixes-release-0.3/lepton-compat
+deckard-arch-hotfixes-release-0.3/deckard-mesa-android-aarch64
+deckard-arch-hotfixes-release-0.3/deckard-vulkan-layers-android-aarch64
+deckard-arch-hotfixes-release-0.3/deckard-vulkan-layers-linux-aarch64
+deckard-arch-hotfixes-release-0.3/android-platform-tools
+which
+inotify-tools
+# "!name" satisfies dependencies on name without installing it:
+# pico4-session.service replaces sddm.
+!sddm
+
+# Diagnostics (mtools: the stage-2 USB log drive)
+deckard-arch-hotfixes-release-0.3/libdrm
+mtools
+evtest
+strace
+usbutils
+
+# The Frame's builds of dependencies that Holo's core and extra also have, where the Frame's is the
+# same version or newer (docs/userspace.md#where-the-packages-come-from): filesystem gives
+# os-release ID=steamos and /etc/steamos-release; PipeWire and WirePlumber are the Frame's 1.6.8 and
+# 0.5.14; bluez-libs matches the Frame's bluez. The Frame's older builds of the others need its
+# private base.
+deckard-arch-hotfixes-release-0.3/filesystem
+deckard-arch-hotfixes-release-0.3/bash
+deckard-arch-hotfixes-release-0.3/gptfdisk
+deckard-arch-hotfixes-release-0.3/mkinitcpio-busybox
+deckard-arch-hotfixes-release-0.3/linux-api-headers
+deckard-arch-hotfixes-release-0.3/alsa-card-profiles
+deckard-arch-hotfixes-release-0.3/libpipewire
+deckard-arch-hotfixes-release-0.3/pipewire-audio
+deckard-arch-hotfixes-release-0.3/libwireplumber
+deckard-arch-hotfixes-release-0.3/wayland
+deckard-arch-hotfixes-release-0.3/libxkbcommon
+deckard-arch-hotfixes-release-0.3/libxkbcommon-x11
+deckard-arch-hotfixes-release-0.3/v4l-utils
+deckard-arch-hotfixes-release-0.3/bluez-libs
+# libxml2.so.2, which the Frame's wayland and libxkbcommon link (core's libxml2 is 2.15, libxml2.so.16)
+libxml2-legacy

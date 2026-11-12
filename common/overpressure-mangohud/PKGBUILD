@@ -1,0 +1,39 @@
+# MangoHud with mangoapp, the Steam client's performance overlay that gamescope's session
+# starts. The Frame's own build links the Frame's private base (spdlog
+# 1.13, fmt 10, libtracefs), which neither Holo nor the hotfix repository carries; this one
+# builds upstream's release against the image's libraries. The source archive bundles its
+# subprojects (Dear ImGui, ImPlot, spdlog, the Vulkan headers), which link statically; spdlog
+# stays bundled so that the image's newer spdlog and fmt do not matter. No NVIDIA support.
+# gamescope reaches mangoapp through a System V message queue.
+pkgname=overpressure-mangohud
+pkgver=0.8.4
+pkgrel=1
+arch=(aarch64)
+url="https://github.com/flightlessmango/MangoHud"
+license=(MIT)
+depends=(dbus gcc-libs glfw glibc libx11 libxkbcommon wayland)
+makedepends=(meson ninja glslang python-mako vulkan-headers)
+provides=(mangohud)
+conflicts=(mangohud pico4-mangohud)
+replaces=(pico4-mangohud)
+source=("https://github.com/flightlessmango/MangoHud/releases/download/v$pkgver/MangoHud-v$pkgver-Source.tar.xz")
+# The SHA-256 GitHub publishes for the release asset.
+sha256sums=('bbe5a2b976313c53f21dc24b98bbed03226589460a0cce20d923cb2c36c9d8b0')
+
+build() {
+  # One version script serves every library, some of which lack its symbols (dlsym, the
+  # GLX/EGL hooks): GNU ld ignores such entries, LLVM's lld refuses them unless told.
+  LDFLAGS+=" -Wl,--undefined-version"
+  # --wrap-mode=nodownload: only the subprojects in the archive, nothing from the network.
+  meson setup build "MangoHud-v$pkgver" --prefix=/usr --libexecdir=lib --buildtype=plain \
+    --wrap-mode=nodownload \
+    -Dmangoapp=true -Dmangohudctl=true -Dtests=disabled -Dmangoplot=disabled -Dinclude_doc=false \
+    -Dwith_nvml=disabled -Dwith_xnvctrl=disabled -Duse_system_spdlog=disabled
+  # build/packages.sh bounds the jobs by memory (meson takes no MAKEFLAGS).
+  meson compile -C build -j "${OVERPRESSURE_BUILD_JOBS:-0}"
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir" --skip-subprojects
+  install -Dm644 "MangoHud-v$pkgver/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname"
+}

@@ -1,0 +1,25 @@
+--- a/spa/plugins/alsa/alsa-pcm.c
++++ b/spa/plugins/alsa/alsa-pcm.c
+@@ -3439,6 +3439,8 @@
+ 	return total_frames;
+ }
+ 
++static uint64_t get_time_ns(struct state *state);
++
+ static int alsa_read_sync(struct state *state, uint64_t current_time)
+ {
+ 	int res, suppressed;
+@@ -3460,8 +3462,11 @@
+ 	if (SPA_UNLIKELY(!following && avail < state->read_size)) {
+ 		spa_log_trace(state->log, "%p: early wakeup %ld %ld %ld %d", state,
+ 				delay, avail, target, state->read_size);
+-		state->next_time = current_time + (state->read_size - avail) * SPA_NSEC_PER_SEC /
+-			state->rate;
++		/* On the timer path current_time is the planned wakeup, not the clock. After a
++		 * recovery it lies in the past: a timeout from it fires at once, again and again
++		 * while no data is there, until a real-time thread reaches its RLIMIT_RTTIME. */
++		state->next_time = SPA_MAX(current_time, get_time_ns(state)) +
++			(state->read_size - avail) * SPA_NSEC_PER_SEC / state->rate;
+ 		return -EAGAIN;
+ 	}
+ 

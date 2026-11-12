@@ -1,0 +1,38 @@
+# PipeWire's ALSA plugin, built from the version Valve ships, with one fix: a capture stream that runs
+# through a suspend put PipeWire's real-time thread in a busy loop at the wake, until the kernel's
+# RT watchdog killed PipeWire. Only the plugin: its pacman hook installs it over the one from Valve's
+# pipewire-audio, whenever either package is installed or upgraded; removing this package leaves the
+# copy until pipewire-audio is reinstalled. The exact version in depends stops the build when Valve's
+# moves.
+pkgname=overpressure-spa-alsa
+pkgver=1.6.8
+pkgrel=1
+pkgdesc="PipeWire's ALSA plugin with the capture wakeup taken from the clock"
+arch=(aarch64)
+url="https://pipewire.org"
+license=(MIT)
+depends=(alsa-lib glibc systemd-libs "pipewire-audio=1:$pkgver")
+makedepends=(meson ninja)
+conflicts=(pico4-spa-alsa)
+replaces=(pico4-spa-alsa)
+source=("pipewire-$pkgver.tar.gz::https://gitlab.freedesktop.org/pipewire/pipewire/-/archive/$pkgver/pipewire-$pkgver.tar.gz"
+        early-wakeup-from-the-clock.patch
+        overpressure-spa-alsa.hook)
+sha256sums=(8181172a1d95131f6af8bbc0b98f90b2a33349b042b84c3ce57dd5d11348cc58
+            fa3fb7912ba223c047f64f0889e2a31b1ff5e7106e3f67f24c3c04430b57afe1
+            0beebaa0f495d9ca1873b0b07ee6645a0a5a26e8309a81b11f9536e92387a7b8)
+
+prepare() {
+  patch -d "pipewire-$pkgver" -p1 -N -r - < early-wakeup-from-the-clock.patch || true
+  grep -q 'SPA_MAX(current_time, get_time_ns(state))' "pipewire-$pkgver/spa/plugins/alsa/alsa-pcm.c"
+}
+
+build() {
+  [[ -f build/build.ninja ]] || meson setup "pipewire-$pkgver" build --prefix /usr --libdir lib --buildtype release     -Dauto_features=disabled -Dspa-plugins=enabled -Dalsa=enabled -Dudev=enabled -Dcompress-offload=enabled     -Dsession-managers=[] -Dexamples=disabled -Dtests=disabled -Dman=disabled -Ddocs=disabled
+  meson compile -C build spa/plugins/alsa/spa-alsa
+}
+
+package() {
+  install -Dm755 build/spa/plugins/alsa/libspa-alsa.so "$pkgdir/usr/lib/$pkgname/libspa-alsa.so"
+  install -Dm644 overpressure-spa-alsa.hook -t "$pkgdir/usr/share/libalpm/hooks"
+}

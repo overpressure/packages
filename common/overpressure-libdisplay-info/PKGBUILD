@@ -1,0 +1,25 @@
+# libdisplay-info 0.1, which Valve's Mesa (deckard-mesa-linux-aarch64) links; the repositories have
+# a newer one with another soname. Only the runtime library, beside that one.
+pkgname=overpressure-libdisplay-info
+pkgver=0.1.1
+pkgrel=1
+pkgdesc="libdisplay-info 0.1 for Valve's Mesa"
+arch=(aarch64)
+license=(MIT)
+depends=(glibc)
+makedepends=(meson ninja hwdata)
+conflicts=(pico4-libdisplay-info)
+replaces=(pico4-libdisplay-info)
+source=("libdisplay-info-$pkgver.tar.gz::https://gitlab.freedesktop.org/emersion/libdisplay-info/-/archive/$pkgver/libdisplay-info-$pkgver.tar.gz")
+sha256sums=(a5aeef57817916286526292ec816a5338c4d3c0094ce91e584fc82b57070a44f)
+
+build() {
+  [[ -f build/build.ninja ]] || meson setup "libdisplay-info-$pkgver" build --prefix /usr --libdir lib --buildtype release
+  meson compile -C build
+}
+
+package() {
+  DESTDIR="$PWD/root" meson install -C build --no-rebuild
+  install -dm755 "$pkgdir/usr/lib"
+  cp -a root/usr/lib/libdisplay-info.so.1 root/usr/lib/libdisplay-info.so.$pkgver "$pkgdir/usr/lib/"
+}

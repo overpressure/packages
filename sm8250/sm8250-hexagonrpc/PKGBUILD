@@ -1,0 +1,44 @@
+# Host side of the Qualcomm Sensor Core on the SM8250: hexagonrpcd, the FastRPC file server PICO OS
+# ships as a vendor binary and that exists as free software (linux-msm). The sensors process loads its registry
+# and config through it. Patched to serve the registry's version file, to start the ADSP's static
+# audio process (-P audiopd, INIT_CREATE_STATIC), as PICO OS's "adsprpcd audiopd" does, and to answer
+# ftell, which that process reads its files with. A second patch takes the sensors process's registry
+# writes and drops them.
+# Sources are pinned by commit; the patches are this project's own.
+pkgname=sm8250-hexagonrpc
+pkgver=0.1
+pkgrel=1
+arch=(aarch64)
+url="https://github.com/linux-msm"
+license=(GPL-3.0-or-later)
+depends=(glibc xz)
+makedepends=(git meson ninja)
+provides=(hexagonrpc)
+conflicts=(hexagonrpc pico4-sensors)
+replaces=(pico4-sensors)
+_hexagonrpc=da7a3742ab8d5273a281b70ee11f16fb2cb6a690
+source=("hexagonrpc::git+https://github.com/linux-msm/hexagonrpc.git#commit=$_hexagonrpc"
+        hexagonrpc-audiopd.patch
+        hexagonrpc-registry-writes.patch)
+sha256sums=(SKIP
+            '2ed79864e140c22f864fe2720e8738c497afaf42c8622424b527dacea1d309b7'
+            '5263fe886404d2ea7491cecb41bdace9f7055a2762acd6e0a4985b23bee6c281')
+
+prepare() {
+  patch -d hexagonrpc -p1 < hexagonrpc-audiopd.patch
+  patch -d hexagonrpc -p1 < hexagonrpc-registry-writes.patch
+}
+
+build() {
+  meson setup hexagonrpc build-hexagonrpc --prefix /usr --buildtype plain
+  meson compile -C build-hexagonrpc
+}
+
+check() {
+  meson test -C build-hexagonrpc --print-errorlogs
+}
+
+package() {
+  DESTDIR="$pkgdir" meson install -C build-hexagonrpc
+  install -Dm644 hexagonrpc/COPYING "$pkgdir/usr/share/licenses/$pkgname/hexagonrpc.COPYING"
+}

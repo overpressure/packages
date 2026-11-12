@@ -1,0 +1,13 @@
+# overpressure-spa-alsa: PipeWire's ALSA plugin with the capture fix, over pipewire-audio's.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = pipewire-audio
+Target = overpressure-spa-alsa
+
+[Action]
+Description = Installing the ALSA plugin with the capture fix over PipeWire's...
+When = PostTransaction
+Depends = coreutils
+Exec = /usr/bin/install -m755 /usr/lib/overpressure-spa-alsa/libspa-alsa.so /usr/lib/spa-0.2/alsa/libspa-alsa.so

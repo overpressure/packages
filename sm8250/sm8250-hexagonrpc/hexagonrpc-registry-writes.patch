@@ -1,0 +1,250 @@
+--- a/hexagonrpcd/apps_std.c
++++ b/hexagonrpcd/apps_std.c
+@@ -46,6 +46,19 @@
+ };
+ 
+ /*
++ * The sensors process rewrites its registry at every start: each group to temp.json, renamed over
++ * the group. Refused, it retried each about 22 ms apart, and its IMU came after 37 s, with nothing
++ * saved in the end. Taken and dropped, it comes in 1 s. The DSP then runs as on any boot here, from
++ * the registry in persist, which stays read-only.
++ */
++#define REGISTRY_WRITE_FD HEXAGONFS_MAX_FD
++
++static bool is_registry_path(const char *path)
++{
++	return strstr(path, "/sensors/registry/") != NULL;
++}
++
++/*
+  * This is a placeholder function used to complete any I/O operations.
+  * File descriptors do not have a flush operation because their reads and
+  * writes are blocking.
+@@ -73,6 +86,9 @@
+ 	const uint32_t *first_in = inbufs[0].p;
+ 	int ret;
+ 
++	if (*first_in == REGISTRY_WRITE_FD)
++		return 0;
++
+ 	ret = hexagonfs_close(ctx->fds, *first_in);
+ 	if (ret) {
+ 		fprintf(stderr, "Could not close: %s\n", strerror(-ret));
+@@ -86,6 +102,37 @@
+ 	return 0;
+ }
+ 
++static uint32_t apps_std_fwrite(void *data,
++				const struct fastrpc_io_buffer *inbufs,
++				struct fastrpc_io_buffer *outbufs)
++{
++	const uint32_t *fd = inbufs[0].p;
++	struct {
++		uint32_t written;
++		uint32_t is_eof;
++	} *first_out = outbufs[0].p;
++
++	if (*fd != REGISTRY_WRITE_FD)
++		return AEE_EUNSUPPORTED;
++
++	first_out->written = inbufs[1].s;
++	first_out->is_eof = 0;
++
++	return 0;
++}
++
++static uint32_t apps_std_rename(void *data,
++				const struct fastrpc_io_buffer *inbufs,
++				struct fastrpc_io_buffer *outbufs)
++{
++	const char *from = inbufs[1].p;
++
++	if (inbufs[1].s == 0 || from[inbufs[1].s - 1] != 0 || !is_registry_path(from))
++		return AEE_EUNSUPPORTED;
++
++	return 0;
++}
++
+ static uint32_t apps_std_fread(void *data,
+ 			       const struct fastrpc_io_buffer *inbufs,
+ 			       struct fastrpc_io_buffer *outbufs)
+@@ -195,6 +242,10 @@
+ 
+ 	rw_mode = ((const char *) inbufs[4].p)[0];
+ 	if (rw_mode == 'w' || rw_mode == 'a') {
++		if (is_registry_path(inbufs[3].p)) {
++			*out = REGISTRY_WRITE_FD;
++			return 0;
++		}
+ 		fprintf(stderr, "Tried to open %s for writing\n",
+ 				(const char *) inbufs[3].p);
+ 		return AEE_EUNSUPPORTED;
+@@ -448,7 +499,10 @@
+ 		.def = &apps_std_fread_def,
+ 		.impl = apps_std_fread,
+ 	},
+-	{ .def = NULL, .impl = NULL, },
++	{
++		.def = &apps_std_fwrite_def,
++		.impl = apps_std_fwrite,
++	},
+ 	{ .def = NULL, .impl = NULL, },
+ 	{ .def = NULL, .impl = NULL, },
+ 	{
+@@ -496,10 +550,15 @@
+ 		.def = &apps_std_stat_def,
+ 		.impl = apps_std_stat,
+ 	},
++	{ .def = NULL, .impl = NULL, },
++	{
++		.def = &apps_std_rename_def,
++		.impl = apps_std_rename,
++	},
+ };
+ 
+ const struct fastrpc_interface apps_std_interface = {
+ 	.name = "apps_std",
+-	.n_procs = 32,
++	.n_procs = 34,
+ 	.procs = apps_std_procs,
+ };
+--- a/hexagonrpcd/interface/adsp_listener.c
++++ b/hexagonrpcd/interface/adsp_listener.c
+@@ -48,3 +48,18 @@
+ 	.n_inner_types = 0,
+ 	.inner_types = NULL,
+ };
++
++struct hrpc_arg_def_interp4 adsp_listener_get_in_bufs2_args[] = {
++	{ HRPC_ARG_WORD, sizeof(uint32_t) },
++	{ HRPC_ARG_WORD, sizeof(uint32_t) },
++	{ HRPC_ARG_OUT_BLOB, sizeof(uint32_t) },
++	{ HRPC_ARG_OUT_BLOB_SEQ, sizeof(char) },
++};
++
++const struct hrpc_method_def_interp4 adsp_listener_get_in_bufs2_def = {
++	.msg_id = 5,
++	.n_args = HRPC_ARRAY_SIZE(adsp_listener_get_in_bufs2_args),
++	.args = adsp_listener_get_in_bufs2_args,
++	.n_inner_types = 0,
++	.inner_types = NULL,
++};
+--- a/hexagonrpcd/interface/adsp_listener.h
++++ b/hexagonrpcd/interface/adsp_listener.h
+@@ -33,6 +33,14 @@
+ 	return hexagonrpc(&adsp_listener_init2_def, fd, ADSP_LISTENER);
+ }
+ 
++extern struct hrpc_method_def_interp4 adsp_listener_get_in_bufs2_def;
++static inline int adsp_listener_get_in_bufs2(int fd, uint32_t rctx, uint32_t offset,
++					     uint32_t *len, uint32_t size, void *bufs)
++{
++	return hexagonrpc(&adsp_listener_get_in_bufs2_def, fd, ADSP_LISTENER,
++			  rctx, offset, len, size, bufs);
++}
++
+ extern struct hrpc_method_def_interp4 adsp_listener_next2_def;
+ static inline int adsp_listener_next2(int fd,
+ 				      uint32_t ret_rctx,
+--- a/hexagonrpcd/interface/apps_std.c
++++ b/hexagonrpcd/interface/apps_std.c
+@@ -75,6 +75,21 @@
+ 	.inner_types = NULL,
+ };
+ 
++static struct hrpc_arg_def_interp4 apps_std_fwrite_args[] = {
++	{ HRPC_ARG_WORD, sizeof(uint32_t) },
++	{ HRPC_ARG_BLOB_SEQ, sizeof(char) },
++	{ HRPC_ARG_OUT_BLOB, sizeof(uint32_t) },
++	{ HRPC_ARG_OUT_BLOB, sizeof(uint32_t) },
++};
++
++const struct hrpc_method_def_interp4 apps_std_fwrite_def = {
++	.msg_id = 5,
++	.n_args = HRPC_ARRAY_SIZE(apps_std_fwrite_args),
++	.args = apps_std_fwrite_args,
++	.n_inner_types = 0,
++	.inner_types = NULL,
++};
++
+ static struct hrpc_arg_def_interp4 apps_std_ftell_args[] = {
+ 	{ HRPC_ARG_WORD, sizeof(uint32_t) },
+ 	{ HRPC_ARG_OUT_BLOB, sizeof(uint32_t) },
+@@ -195,3 +210,16 @@
+ 	.n_inner_types = 0,
+ 	.inner_types = NULL,
+ };
++
++static struct hrpc_arg_def_interp4 apps_std_rename_args[] = {
++	{ HRPC_ARG_BLOB_SEQ, sizeof(char) },
++	{ HRPC_ARG_BLOB_SEQ, sizeof(char) },
++};
++
++const struct hrpc_method_def_interp4 apps_std_rename_def = {
++	.msg_id = 33,
++	.n_args = HRPC_ARRAY_SIZE(apps_std_rename_args),
++	.args = apps_std_rename_args,
++	.n_inner_types = 0,
++	.inner_types = NULL,
++};
+--- a/hexagonrpcd/interface/apps_std.h
++++ b/hexagonrpcd/interface/apps_std.h
+@@ -28,6 +28,8 @@
+ extern struct hrpc_method_def_interp4 apps_std_fflush_def;
+ extern struct hrpc_method_def_interp4 apps_std_fclose_def;
+ extern struct hrpc_method_def_interp4 apps_std_fread_def;
++extern struct hrpc_method_def_interp4 apps_std_fwrite_def;
++extern struct hrpc_method_def_interp4 apps_std_rename_def;
+ extern struct hrpc_method_def_interp4 apps_std_ftell_def;
+ extern struct hrpc_method_def_interp4 apps_std_fseek_def;
+ extern struct hrpc_method_def_interp4 apps_std_fopen_with_env_def;
+--- a/hexagonrpcd/listener.c
++++ b/hexagonrpcd/listener.c
+@@ -457,12 +457,6 @@
+ 		goto err_free_outbufs;
+ 	}
+ 
+-	if (inbufs_len > 256) {
+-		fprintf(stderr, "Large (>256B) input buffers aren't implemented\n");
+-		ret = -1;
+-		goto err_free_outbufs;
+-	}
+-
+ 	ctx = inbuf_decode_start(*sc);
+ 	if (!ctx) {
+ 		perror("Could not start decoding");
+@@ -470,12 +464,33 @@
+ 		goto err_free_outbufs;
+ 	}
+ 
+-	ret = inbuf_decode(ctx, inbufs_len, inbufs);
++	ret = inbuf_decode(ctx, inbufs_len < 256 ? inbufs_len : 256, inbufs);
+ 	if (ret) {
+ 		perror("Could not decode");
+ 		goto err_free_outbufs;
+ 	}
+ 
++	// What does not fit the first 256 bytes comes through its own call.
++	for (uint32_t offset = 256; offset < inbufs_len;) {
++		static char more[4096];
++		uint32_t got = 0;
++		uint32_t want = inbufs_len - offset;
++
++		if (want > sizeof(more))
++			want = sizeof(more);
++		ret = adsp_listener_get_in_bufs2(fd, *rctx, offset, &got, want, more);
++		if (ret) {
++			fprintf(stderr, "Could not fetch the input at %u: %d\n", offset, ret);
++			goto err_free_outbufs;
++		}
++		ret = inbuf_decode(ctx, want, more);
++		if (ret) {
++			perror("Could not decode");
++			goto err_free_outbufs;
++		}
++		offset += want;
++	}
++
+ 	if (!inbuf_decode_is_complete(ctx)) {
+ 		fprintf(stderr, "Expected more input buffers\n");
+ 		ret = -1;

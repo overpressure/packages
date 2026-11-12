@@ -1,0 +1,82 @@
+# gamescope as the Frame runs it (Valve's 3.16.28-1 is upstream's commit ea3579ed), with one
+# fix: its window manager added a window that reached the root twice (CreateNotify and then
+# ReparentNotify) as a second list entry, which kept the window's shared override surface after
+# the surface was freed and read it every vblank; a game starting (The Lab) reused the memory and
+# gamescope crashed, and the session with it. Built as upstream intends to be
+# packaged: libliftoff, vkroots, wlroots and libdisplay-info from the submodules the commit pins,
+# linked statically, as in Valve's build; glm and stb from the commits their wraps name.
+# Valve's package also has steamos-session-shell, a helper outside upstream's tree that nothing
+# in the image calls; it is not carried.
+pkgname=overpressure-gamescope
+pkgver=3.16.28
+pkgrel=1
+_commit=ea3579ed612151eaa005d526a2533e8932854f58
+_glm=0af55ccecd98d4e5a8d1fad7de25ba429d60e863
+_stb=5736b15f7ea0ffb08dd38af21067c314d6a3aae9
+# wlroots 0.20 needs wayland-protocols 1.47; the build root has an older one. Its wrap names no
+# revision, so the release is pinned here.
+_wayland_protocols=88223018d1b578d0d8869866da66d9608e05f928 # 1.47
+arch=(aarch64)
+url="https://github.com/ValveSoftware/gamescope"
+license=(BSD-2-Clause)
+depends=(gcc-libs glibc hwdata libavif libcap libdecor libdrm libei libinput libx11 libxcb libxcomposite
+         libxcursor libxdamage libxext libxfixes libxi libxkbcommon libxmu libxrender libxres libxtst
+         libxxf86vm luajit pipewire pixman sdl2 seatd vulkan-icd-loader wayland xcb-util-errors
+         xcb-util-wm xorg-xwayland)
+makedepends=(cmake git glslang meson ninja vulkan-headers wayland-protocols)
+provides=("gamescope=$pkgver")
+conflicts=(gamescope pico4-gamescope)
+replaces=(pico4-gamescope)
+# The superproject pins each submodule's commit; prepare() checks those out from these clones.
+source=("gamescope::git+https://github.com/ValveSoftware/gamescope.git#commit=$_commit"
+        "wlroots::git+https://gitlab.freedesktop.org/wlroots/wlroots.git"
+        "libliftoff::git+https://gitlab.freedesktop.org/emersion/libliftoff.git"
+        "vkroots::git+https://github.com/Joshua-Ashton/vkroots.git"
+        "libdisplay-info::git+https://gitlab.freedesktop.org/emersion/libdisplay-info.git"
+        "openvr::git+https://github.com/ValveSoftware/openvr.git"
+        "reshade::git+https://github.com/Joshua-Ashton/reshade.git"
+        "SPIRV-Headers::git+https://github.com/KhronosGroup/SPIRV-Headers.git"
+        "glm::git+https://github.com/g-truc/glm.git#commit=$_glm"
+        "stb::git+https://github.com/nothings/stb.git#commit=$_stb"
+        "wayland-protocols::git+https://gitlab.freedesktop.org/wayland/wayland-protocols.git#commit=$_wayland_protocols"
+        gamescope-add-win-once.patch)
+sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
+            SKIP '606f1c30b484de48b101508d6858f77660d5528316b1ae3a06cb2380fae300ff')
+
+prepare() {
+  cd gamescope
+  local m
+  for m in subprojects/wlroots subprojects/libliftoff subprojects/vkroots subprojects/libdisplay-info \
+           subprojects/openvr src/reshade thirdparty/SPIRV-Headers; do
+    git submodule init "$m"
+    git config "submodule.$m.url" "$srcdir/${m##*/}"
+    git -c protocol.file.allow=always submodule update "$m"
+  done
+  # The wraps' sources with their overlay files, as meson would download them.
+  rm -rf subprojects/glm subprojects/stb
+  cp -a "$srcdir/glm" subprojects/glm
+  cp -a "$srcdir/stb" subprojects/stb
+  cp -a subprojects/packagefiles/glm/. subprojects/glm/
+  cp -a subprojects/packagefiles/stb/. subprojects/stb/
+  # wlroots' fallback for the newer protocols (meson keeps all subprojects at the top level).
+  rm -rf subprojects/wayland-protocols
+  cp -a "$srcdir/wayland-protocols" subprojects/wayland-protocols
+  patch -p1 < "$srcdir/gamescope-add-win-once.patch"
+}
+
+build() {
+  # Valve's binary: the SDL2 window backend, AVIF screenshots, input emulation (libei), PipeWire
+  # capture, the DRM backend and OpenVR; no tests or benchmarks.
+  meson setup build gamescope --prefix=/usr --buildtype=release --wrap-mode=nodownload \
+    -Dforce_fallback_for=libliftoff,vkroots,wlroots,libdisplay-info,wayland-protocols \
+    -Dpipewire=enabled -Drt_cap=enabled -Ddrm_backend=enabled -Dsdl2_backend=enabled \
+    -Davif_screenshots=enabled -Dinput_emulation=enabled -Denable_openvr_support=true \
+    -Denable_tests=false -Dbenchmark=disabled
+  # build/packages.sh bounds the jobs by memory (meson takes no MAKEFLAGS).
+  meson compile -C build -j "${OVERPRESSURE_BUILD_JOBS:-0}"
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir" --skip-subprojects
+  install -Dm644 gamescope/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

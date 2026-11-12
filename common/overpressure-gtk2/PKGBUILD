@@ -1,0 +1,41 @@
+# GTK 2 for the Steam client: its steamui.so and vgui2_s.so link
+# libgtk-x11-2.0.so.0, which neither the Holo aarch64 preview nor the Frame's hotfix
+# repository carries; the updated client exits at once without it. Upstream's last
+# release, without documentation, introspection or printing. The test suite runs no
+# tests that matter here; build/packages.sh uses --nocheck.
+pkgname=overpressure-gtk2
+pkgver=2.24.33
+pkgrel=1
+arch=(aarch64)
+url="https://www.gtk.org/"
+license=(LGPL-2.1-or-later)
+depends=(at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxrandr libxi libxcomposite
+         libxdamage shared-mime-info gtk-update-icon-cache hicolor-icon-theme)
+makedepends=(glib2-devel)
+provides=(gtk2 libgtk-x11-2.0.so=0-64 libgdk-x11-2.0.so=0-64 libgailutil.so=18-64)
+conflicts=(gtk2 pico4-gtk2)
+replaces=(pico4-gtk2)
+source=("https://download.gnome.org/sources/gtk+/2.24/gtk+-$pkgver.tar.xz")
+# The SHA-256 GNOME publishes next to the tarball (gtk+-2.24.33.sha256sum).
+sha256sums=('ac2ac757f5942d318a311a54b0c80b5ef295f299c2a73c632f6bfb1ff49cc6da')
+
+build() {
+  cd "gtk+-$pkgver"
+  # A 2020 code base: today's compilers turn some of its warnings into errors.
+  CFLAGS+=" -Wno-error=incompatible-function-pointer-types -Wno-error=incompatible-pointer-types"
+  CFLAGS+=" -Wno-error=implicit-function-declaration -Wno-error=int-conversion"
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --with-xinput=yes \
+    --disable-gtk-doc --disable-introspection --disable-cups --disable-papi --disable-static
+  # Libtool otherwise adds an rpath and overlinks.
+  sed -i 's/ -shared / -Wl,-O1,--as-needed\0/g' libtool
+  # The libraries and modules only: the demos, tests and benchmarks are not packaged.
+  make SRC_SUBDIRS="gdk gtk modules"
+}
+
+package() {
+  cd "gtk+-$pkgver"
+  make SRC_SUBDIRS="gdk gtk modules" DESTDIR="$pkgdir" install
+  # gtk-update-icon-cache comes from its own package; gtk-builder-convert needs Python 2.
+  rm -f "$pkgdir"/usr/bin/{gtk-update-icon-cache,gtk-builder-convert}
+  rm -f "$pkgdir"/usr/share/man/man1/gtk-update-icon-cache.1
+}

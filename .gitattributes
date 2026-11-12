@@ -1,0 +1,2 @@
+# Recipes, patches and scripts stay LF on every system: their checksums and shells depend on it.
+* text=auto eol=lf

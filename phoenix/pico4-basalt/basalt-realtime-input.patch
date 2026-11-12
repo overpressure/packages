@@ -1,0 +1,80 @@
+Keep the VIT tracker real-time.
+
+Frame sets queued up before the optical flow (10) and before the estimator (10)
+and stayed queued: on the PICO 4 every pose reached Monado 0.64 s after its
+frame, while the tracker processed all 25 sets a second. Full queues also
+blocked the caller's IMU pushes. Outside deterministic mode, one frame set may
+wait for the optical flow (a newer one replaces it), two for the estimator, and
+IMU pushes never block: a full queue loses its oldest sample.
+
+--- a/src/vit/vit_tracker.cpp
++++ b/src/vit/vit_tracker.cpp
+@@ -157,6 +157,19 @@
+ 
+   OpticalFlowInput::Ptr partial_frame;
+ 
++  // Inputs dropped to stay real-time (see push_frame and push_imu_sample).
++  uint64_t replaced_frames = 0;
++  uint64_t dropped_imu = 0;
++
++  //! Pushes without blocking: a full queue loses its oldest entry instead. True if one was lost.
++  template <typename T>
++  static bool push_replacing_oldest(tbb::concurrent_bounded_queue<T> &queue, const T &item) {
++    bool lost = false;
++    T oldest;
++    while (!queue.try_push(item)) lost |= queue.try_pop(oldest);
++    return lost;
++  }
++
+   explicit Implementation(const vit::Config *config) : show_gui(config->show_ui), cam_count(config->cam_count) {
+     cout << "Basalt with cam_count=" << cam_count << ", show_gui=" << show_gui << "\n";
+ 
+@@ -390,6 +403,14 @@
+     ASSERT_(imu_data_queue != nullptr);
+ 
+     opt_flow_ptr->output_queue = &vio->vision_data_queue;
++    if (!deterministic) {
++      // Once ten frame sets queue up before the optical flow and ten more before the
++      // estimator, every pose stays that far behind even when the tracker keeps up
++      // again (0.64 s on the PICO 4). One set may wait for the optical flow, and a newer
++      // one replaces it (push_frame); two may wait for the estimator.
++      image_data_queue->set_capacity(1);
++      vio->vision_data_queue.set_capacity(2);
++    }
+     opt_flow_ptr->show_gui = show_gui;
+     if (show_gui) {
+       ui.initialize(cam_count);
+@@ -444,8 +465,18 @@
+     data->t_ns = s->timestamp;
+     data->accel = {s->ax, s->ay, s->az};
+     data->gyro = {s->wx, s->wy, s->wz};
+-    imu_data_queue->push(data);
+-    opt_flow_ptr->input_imu_queue.push(data);
++    if (deterministic) {
++      imu_data_queue->push(data);
++      opt_flow_ptr->input_imu_queue.push(data);
++      return;
++    }
++    // Never block the caller's IMU thread: if the estimator falls this far behind, it
++    // loses its oldest samples instead.
++    bool lost = push_replacing_oldest(*imu_data_queue, data);
++    lost |= push_replacing_oldest(opt_flow_ptr->input_imu_queue, data);
++    if (lost && dropped_imu++ % 1000 == 0) {
++      cout << "Basalt: dropped " << dropped_imu << " old IMU samples (tracker behind)\n";
++    }
+   }
+ 
+   void push_frame(const vit::ImgSample *s) {
+@@ -494,7 +525,11 @@
+     if (i == cam_count - 1) {
+       partial_frame->addTime("frames_read");
+       partial_frame->addTime("frames_pushed");
+-      image_data_queue->push(partial_frame);
++      if (deterministic) {
++        image_data_queue->push(partial_frame);
++      } else if (push_replacing_oldest(*image_data_queue, partial_frame) && replaced_frames++ % 100 == 0) {
++        cout << "Basalt: replaced " << replaced_frames << " waiting frame sets (tracker behind)\n";
++      }
+       if (show_gui) ui.update_last_image(partial_frame);
+       if (deterministic) pop_state();
+     }
