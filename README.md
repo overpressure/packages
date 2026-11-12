@@ -14,8 +14,8 @@ image, so that an image's build downloads them instead of compiling them.
 | `sm8250/` | packages for the Snapdragon XR2 (SM8250): hexagonrpc, the DSPs' file server | `sm8250-*` |
 | `phoenix/` | packages for the PICO 4: Basalt with the PICO 4's settings | `pico4-*` |
 | `headsets/<codename>/` | a headset's image definition: `layers`, `pacman.conf`, `packages.txt`, `packages.lock` | |
-| `build/packages.sh` | the build of a headset's packages | |
-| `tests/` | the layout's checks | |
+| `build/packages.sh`, `build/plan.py` | the build of a headset's packages; the jobs and cache keys CI builds them with | |
+| `tests/` | the checks of the layout and of the build plan | |
 
 Each folder in a layer is one recipe, a `PKGBUILD` with the files it installs or applies beside it. A
 recipe pins its upstream by version and hash or by commit.
