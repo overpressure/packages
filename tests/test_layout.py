@@ -95,9 +95,10 @@ class Definitions(unittest.TestCase):
                 self.assertRegex(raw, r"^[0-9a-f]{64}  \S+\.pkg\.tar\.zst$")
 
     def test_files_are_lf(self) -> None:
-        for path in ROOT.rglob("*"):
-            if path.is_file() and ".git" not in path.parts and "out" not in path.relative_to(ROOT).parts[:1]:
-                self.assertNotIn(b"\r\n", path.read_bytes(), path)
+        run = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True)  # noqa: S607
+        for name in run.stdout.decode().split("\0"):
+            if name:
+                self.assertNotIn(b"\r\n", (ROOT / name).read_bytes(), name)
 
 
 @unittest.skipUnless(bash(), "needs bash")
