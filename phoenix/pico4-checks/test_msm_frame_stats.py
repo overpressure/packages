@@ -65,16 +65,14 @@ class MsmFrameStatsTests(unittest.TestCase):
         end["job_margin_ms"]["p99"] = 6.3
         self.assertEqual(perf.verdict(end, 60.0)["status"], "passed")
 
-    def test_a_window_without_a_panel_passes_with_a_warning(self):
+    def test_the_web_helpers_share_is_reported_and_judges_nothing(self):
         flips = [100 + i * REFRESH for i in range(901)]
         end = stats.parse(trace(flips, 901, [(700, 5.9)]), {700})
         end["job_margin_ms"] = {"p50": 7.1, "p99": 6.3, "frames": 900, "without_a_job": 0}
-        end["web_helper_gpu_percent"] = 0.0
-        v = perf.verdict(end, 60.0)
-        self.assertEqual(v["status"], "passed")
-        self.assertIn("no Steam panel was tested", v["warnings"][0])
-        end["web_helper_gpu_percent"] = 12.5
-        self.assertEqual(perf.verdict(end, 60.0)["warnings"], [])
+        for share in (0.0, 12.5):
+            end["web_helper_gpu_percent"] = share
+            v = perf.verdict(end, 60.0)
+            self.assertEqual((v["status"], v["web_helper_gpu_percent"]), ("passed", share))
 
     def test_the_web_helpers_threads_count_apart_from_the_compositors(self):
         flips = [100 + i * REFRESH for i in range(91)]
@@ -151,6 +149,43 @@ def full_trace(frames: int, late: int) -> list[str]:
         if n == late:
             retired(v + 0.004, 9999, 801, 2000000)
     return lines
+
+
+class QuietTests(unittest.TestCase):
+    """The session check measures once Steam's library has stopped redrawing its blurred, zooming art."""
+
+    @staticmethod
+    def run_quiet(shares: list[float | None], limit: float) -> tuple[dict, list[float]]:
+        now = [0.0]
+        windows = []
+
+        def measure(seconds: float, pid: int) -> dict:
+            windows.append(seconds)
+            now[0] += seconds
+            share = shares[min(len(windows), len(shares)) - 1]
+            return {} if share is None else {"web_helper_gpu_percent": share}
+
+        return stats.quiet(42, limit, measure=measure, clock=lambda: now[0]), windows
+
+    def test_waits_until_the_web_helpers_are_quiet(self):
+        result, windows = self.run_quiet([22.7, 22.6, 12.0, 1.4], limit=180)
+        self.assertEqual(result, {"quiet": True, "seconds": 20.0, "web_helper_gpu_percent": 1.4})
+        self.assertEqual(windows, [stats.QUIET_WINDOW] * 4)
+
+    def test_quiet_at_once(self):
+        result, windows = self.run_quiet([0.0], limit=180)
+        self.assertEqual(result, {"quiet": True, "seconds": 5.0, "web_helper_gpu_percent": 0.0})
+        self.assertEqual(len(windows), 1)
+
+    def test_gives_up_at_the_limit(self):
+        result, windows = self.run_quiet([22.7], limit=12)
+        self.assertEqual(result, {"quiet": False, "seconds": 15.0, "web_helper_gpu_percent": 22.7})
+        self.assertEqual(len(windows), 3)
+
+    def test_a_window_without_frames_is_not_quiet(self):
+        result, _ = self.run_quiet([None, None, 0.5], limit=180)
+        self.assertEqual(result["seconds"], 15.0)
+        self.assertTrue(result["quiet"])
 
 
 class MissesTests(unittest.TestCase):

@@ -101,12 +101,19 @@ for i in $(seq 180); do
 	sleep 1
 done
 [ "$startup" -ge 0 ] || errors+=("SteamVR's compositor did not start presenting within 180 s")
-# SteamVR's startup stalls the compositor a few times while the dashboard starts: the measured
-# window starts 20 s later.
+# SteamVR's startup stalls the compositor a few times while the dashboard starts, and the Steam
+# client's library home then zooms its art for a minute or two, redrawing blur filters every frame
+# (about 4 ms of GPU per frame on the A650): the measured window starts 20 s after the startup and
+# once the web helpers take (almost) none of the GPU, at most 180 s later (msm-frame-stats quiet).
 settle=0
+quiet=null
 if [ "$startup" -ge 0 ]; then
+	sleep 20
 	settle=20
-	sleep "$settle"
+	quiet=$(/usr/libexec/pico4/msm-frame-stats quiet "$(pgrep -u "$user" -x vrcompositor | head -n 1)" 180 2>/dev/null)
+	grep -q '^{' <<<"$quiet" || quiet=null
+	waited=$(sed -n 's/.*"seconds": *\([0-9]*\).*/\1/p' <<<"$quiet")
+	settle=$((settle + ${waited:-0}))
 	/usr/libexec/pico4/msm-frame-stats record "$seconds" "$(pgrep -u "$user" -x vrcompositor | head -n 1)" \
 		"$work/frames.json" >/dev/null 2>&1 || errors+=("msm's frame events could not be recorded")
 fi
@@ -173,7 +180,8 @@ status=passed
 [ ${#errors[@]} = 0 ] || status=failed
 printf '{"schema":1,"status":%s' "$(json_str "$status")"
 printf ',"errors":%s' "$(printf '%s\n' "${errors[@]+"${errors[@]}"}" | json_list)"
-printf ',"seconds":%s,"startup_seconds":%s,"settle_seconds":%s' "$seconds" "$startup" "$settle"
+printf ',"seconds":%s,"startup_seconds":%s,"settle_seconds":%s,"web_helpers_quiet":%s' "$seconds" "$startup" \
+	"$settle" "$quiet"
 printf ',"session":{"target":"gamescope-session.target","target_state":%s,"steamvr":%s,"gamescope":%s,"failed_units":%s,"restored":%s' \
 	"$(json_str "$target_state")" "$(json_str "$steamvr_state")" "$(json_str "$gamescope_state")" \
 	"$(json_list <<<"$failed")" "$(json_str "$restored")"

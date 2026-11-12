@@ -14,6 +14,9 @@ are what session-performance judges, with the GPU time per job (gpu_ms).
   msm-frame-stats trace SECONDS PID OUT.trace   root: records the events and the GPU's submits and
                                                 the scheduler's switches, for misses
   msm-frame-stats misses TRACE                  where each refresh without a job lost its time
+  msm-frame-stats quiet PID LIMIT               root: waits, in windows of QUIET_WINDOW seconds, until the
+                                                web helpers take less than QUIET_PERCENT of the GPU, at
+                                                most LIMIT seconds; prints how long it waited
 
 A refresh without a job is one in which the compositor's job ended after the vblank. Its time
 splits into the CPU's part (from the vblank before to the submit), the submit's wait (its fences
@@ -33,7 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
 TRACING = Path("/sys/kernel/tracing")
 EVENTS = ("dpu/dpu_crtc_complete_flip", "drm/drm_vblank_event", "drm_msm_gpu/msm_gpu_submit_retired")
@@ -42,6 +45,11 @@ LATE_REFRESHES = 1.5  # a commit more than 1.5 refreshes after the one before
 STALL_S = 0.100  # a gap above 100 ms
 HELPERS = {"steamwebhelper", "vrwebhelper"}
 RECORD_ARGC = 5  # msm-frame-stats record SECONDS PID OUT.json
+QUIET_ARGC = 4  # msm-frame-stats quiet PID LIMIT
+#: Steam's library home zooms its art for a minute or two after the client starts, and its blur filters
+#: then cost the web helper about 4 ms of GPU per frame on the A650; afterwards it draws (almost) nothing.
+QUIET_WINDOW = 5.0
+QUIET_PERCENT = 2.0
 PARSE_MIN_ARGC = 4  # msm-frame-stats parse TRACE TID...
 MISSES_ARGC = 3  # msm-frame-stats misses TRACE
 # The trace command's events: the statistics' and the GPU's submits and the scheduler's switches.
@@ -399,6 +407,24 @@ def misses(lines: Iterable[str]) -> dict[str, Any]:
     }
 
 
+def quiet(
+    pid: int,
+    limit: float,
+    measure: Callable[[float, int], dict[str, Any]] = record,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
+    """Wait until the web helpers' GPU share over a window is below QUIET_PERCENT, at most LIMIT seconds."""
+    start = clock()
+    share = None
+    while True:
+        share = measure(QUIET_WINDOW, pid).get("web_helper_gpu_percent")
+        waited = round(clock() - start, 1)
+        if share is not None and share < QUIET_PERCENT:
+            return {"quiet": True, "seconds": waited, "web_helper_gpu_percent": share}
+        if waited >= limit:
+            return {"quiet": False, "seconds": waited, "web_helper_gpu_percent": share}
+
+
 def main(argv: Sequence[str]) -> int:
     """Run the record or the parse command."""
     if len(argv) == RECORD_ARGC and argv[1] == "record":
@@ -412,12 +438,15 @@ def main(argv: Sequence[str]) -> int:
     if len(argv) == RECORD_ARGC and argv[1] == "trace":
         trace(float(argv[2]), int(argv[3]), Path(argv[4]))
         return 0
+    if len(argv) == QUIET_ARGC and argv[1] == "quiet":
+        print(json.dumps(quiet(int(argv[2]), float(argv[3]))))
+        return 0
     if len(argv) == MISSES_ARGC and argv[1] == "misses":
         print(json.dumps(misses(Path(argv[2]).read_text(errors="replace").splitlines()), indent=1))
         return 0
     print(
         "usage: msm-frame-stats record SECONDS PID OUT.json | parse TRACE TID... | trace SECONDS PID OUT.trace"
-        " | misses TRACE",
+        " | misses TRACE | quiet PID LIMIT",
         file=sys.stderr,
     )
     return 2
