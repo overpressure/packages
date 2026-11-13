@@ -81,6 +81,9 @@ overpressure-phoenix/pico4-checks
 # Basalt as its SLAM backend for 6DoF (docs/xr.md)
 overpressure-phoenix/pico4-monado
 overpressure-phoenix/pico4-basalt
+# Project-built: the host of PICO OS's head tracker in its bionic root (its PICO OS parts are the
+# headset's own, bound in at boot)
+overpressure-phoenix/pico4-slamd
 # Arch's OpenCV links its highgui module against Qt without depending on it;
 # Monado and Basalt load that module
 qt6-base

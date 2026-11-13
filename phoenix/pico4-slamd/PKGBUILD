@@ -1,0 +1,51 @@
+# pico4-slamd: PICO OS's head tracker (libSlam), its auto exposure and depth mesh, hosted in the tracker's
+# bionic root, and the root's stand-ins of this project (libandroid, the FastRPC bridge, the logging and
+# CVP stubs). Built for bionic (aarch64-linux-android29) with clang and lld, against stand-ins of bionic's
+# libc, libm and libdl: no file of PICO's. The headset binds PICO OS's own parts of the root in at boot
+# (pico4-base's preinit, from the data partition's copy and the dsp partition); this package holds the
+# root's own programs and its mount points. The image-processing tests run natively first.
+pkgname=pico4-slamd
+pkgver=1
+pkgrel=1
+pkgdesc="PICO 4 head tracker host for PICO OS's libSlam in its bionic root"
+arch=(aarch64)
+url="https://github.com/overpressure/overpressure/tree/main/devices/phoenix/docs"
+license=(Unlicense)
+makedepends=(clang lld python)
+options=(!strip !debug)
+source=(build.sh crt.c pico4-slamd.c vst.c vst.h stubs.c android.c fastrpc-bridge.c fastrpc_bridge.h bionic.h isp.h
+        room.h bionic-stubs.c bionic-stubs.map pico4_slam_feed.h test_isp.c test_room.c test_fastrpc_bridge.c
+        test_slamd.py)
+sha256sums=('080ebbe2ed0a4a43eeeedec15b515315085c2bd4ef124c95ad33d1f35c1bf5e8'
+            '64374166819d5cf3fdd867d7e944200bda101ba67ecffe5c82f81cbcb2d301c5'
+            '569a2d0aabef469946af9a31e3381d39b0e4699c6dd477796bd5843cfe7349b3'
+            'c67fa8557b6512761b3101899ef2fa72b8695d9f55fe5907b7a8fd377ce172f6'
+            '19b77169e590c9d925a6d5eb5a622962d7bdbc4517f87e0d9a2b0a29368b607e'
+            '7624898c2a64e1c6be062a4cfda92a13c05d39a09655a9ac93f91b0a29ddc214'
+            'c6fc1b92c816587abff790d3a17bb81dc82e4edfe381eeb64ed8c519fc0b0e68'
+            '24f614038845075158d72bcf8a7e4b1bbaeb7062a487f8b61fa9afa74f720ba8'
+            '206d2c9dd2a2b7016afbecd5b3794fe0fe7d2d6aece6f9a737e0260a092852c3'
+            '7efd1f7506782947d13ae9b5af5574330d7162445a9422f5a3a2e3c4467d0b41'
+            'ff893734bfca8410ab3c698b5a37eafaff7e490d5c9cb86622f0d81a04876c9d'
+            '6dc553c19be92be33ef00138fb6262715bc2587849613d24305bfa2f0ec9935b'
+            '95a4842147e12c4c28a38585c5ad4d3171830a8b66cd2d59c539d96ca5bc00d4'
+            '4b5f3018a55258273fca4a209d041ca01f7101ac7eb512b20130cfbe2e4f78cd'
+            'f45d76a543f622df7d8f67d7c8e541675832b80c1076afeed3499ecd06aba7f2'
+            '608befe2639f75341ac4814027b8a68464dc66112bd284bbadd9040ba9b22014'
+            'f7fe40aa72ef0d7af23d3de894906e11630e5d36c2d3eb26018c465b6a303144'
+            '81435015c4f43e39480e7e82b88d3208ce5d8c7eea1127917972796bd92cb79b'
+            '823f4d0f0362eb1e88138206bdf155a7ebe8fd2c32cf2551077f0567f6cfb051')
+
+build() {
+  python3 -B -m unittest test_slamd
+  # The build host's clang where the build environment links one in (x86-64 hosts), else Arch's.
+  CLANG=$(command -v aarch64-unknown-linux-gnu-clang || command -v clang) bash build.sh out .
+}
+
+package() {
+  local root="$pkgdir/usr/lib/pico4-stock-slam"
+  install -Dm755 out/pico4-slamd -t "$root/pico4"
+  install -Dm644 out/libpico4-slam-stubs.so out/libpico4-fastrpc-bridge.so out/libandroid.so -t "$root/pico4"
+  # Mount points: the system image is read-only on the headset.
+  install -dm755 "$root"/{dev,proc,sys,data,tmp,system,vendor,mnt/vendor/persist/pvr,mnt/vendor/pvr}
+}

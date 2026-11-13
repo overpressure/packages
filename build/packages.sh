@@ -51,7 +51,8 @@ BUILDER_PACKAGES=(base-devel git meson ninja cmake eigen openxr python-mako pyth
     glib2-devel at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxi libxcomposite libxdamage
     shared-mime-info gtk-update-icon-cache hicolor-icon-theme glfw dbus libxkbcommon libnl pcsclite
     hwdata libavif libcap libdecor libei libinput libxmu libxres libxtst libxxf86vm luajit pipewire pixman
-    sdl2 seatd xcb-util-errors xcb-util-wm xorg-xwayland libbsd libxml2-legacy)
+    sdl2 seatd xcb-util-errors xcb-util-wm xorg-xwayland libbsd libxml2-legacy
+    clang lld)
 
 mkdir -p "$work" "$out"
 work=$(realpath "$work") out=$(realpath "$out")

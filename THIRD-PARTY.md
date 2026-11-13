@@ -19,6 +19,7 @@ as each file's `SPDX-License-Identifier` header states:
 | --- | --- | --- | --- |
 | `phoenix/pico4-monado/` | the C and C++ files: the PICO 4 driver, its tests, the OpenXR clients and tools | BSL-1.0 | built inside Monado's tree |
 | `phoenix/pico4-vrlink/` | `pico4-vrlink-compat.c` | BSL-1.0 | |
+| `phoenix/pico4-slamd/` | `pico4_slam_feed.h` | BSL-1.0 | a copy of `phoenix/pico4-monado/`'s: the layout both sides of the tracker's shared memory read |
 
 The SteamVR bindings and profile in `phoenix/pico4-monado/` (the JSON files) are the project's own, under
 the Unlicense.

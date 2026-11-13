@@ -131,6 +131,11 @@ class Recipes(unittest.TestCase):
                 beside = {p.name for p in folder.iterdir() if p.name != "PKGBUILD"}
                 self.assertEqual(beside - local, set())
 
+    def test_the_tracker_and_monado_share_one_feed_layout(self) -> None:
+        # pico4-slamd and Monado's PICO 4 driver talk through this shared memory: each recipe holds a copy.
+        monado, slamd = (ROOT / "phoenix" / r / "pico4_slam_feed.h" for r in ("pico4-monado", "pico4-slamd"))
+        self.assertEqual(monado.read_bytes(), slamd.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()
