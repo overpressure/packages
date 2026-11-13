@@ -30,8 +30,9 @@ trap 'rm -rf "$work"' EXIT
 "$clang" -std=c11 -O2 -Wall -Wextra -Werror -o "$work/test_fastrpc_bridge" "$src/test_fastrpc_bridge.c"
 "$work/test_fastrpc_bridge"
 
+# Atomics inline: the stand-ins have no __aarch64_* helpers, which a native arm64 clang calls by default.
 cc=("$clang" --target=aarch64-linux-android29 -fuse-ld=lld -O2 -fPIC -fno-stack-protector -nostdlib -ffreestanding
-    -Wall -Wextra -Werror -I"$feed")
+    -mno-outline-atomics -Wall -Wextra -Werror -I"$feed")
 stubs=$work/stubs
 mkdir -p "$stubs"
 for lib in c m dl; do
