@@ -20,9 +20,13 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 ARGC = 3  # session-performance FRAMES.json HOTTEST_C
-DISPLAY_HZ = 90.0
+#: The panels' refresh rates, the one SteamVR picks (the Frame's default per-app rate is 72 Hz).
+DISPLAY_RATES = (90.0, 72.0)
+DISPLAY_HZ = DISPLAY_RATES[0]
+#: The share of the panels' refresh the compositor must commit.
+COMMIT_SHARE = 0.95
 LIMITS = {
-    "commit_hz_min": 0.95 * DISPLAY_HZ,
+    "commit_hz_min": COMMIT_SHARE * DISPLAY_HZ,
     "late_percent_max": 1.0,  # commits more than 1.5 refreshes after the one before
     "stalls_max": 0,  # gaps between commits above 100 ms
     "hottest_c_max": 90.0,  # hottest thermal zone at the end of the run (docs/cooling.md)
@@ -39,8 +43,14 @@ def seconds(stats: dict[str, Any]) -> float:
     return (commits - 1) / hz if hz > 0 and commits > 1 else 0.0
 
 
+def display_hz(frames: dict[str, Any]) -> float:
+    """Return the refresh rate the panels ran at: the supported rate their vblanks are within 1 % of, else 90."""
+    measured = frames.get("vblank_hz") or 0
+    return next((rate for rate in DISPLAY_RATES if abs(measured - rate) <= 0.01 * rate), DISPLAY_HZ)
+
+
 def verdict(frames: object, hottest_c: float | None) -> dict[str, Any]:
-    """Hold the statistics and the hottest zone (°C) to LIMITS."""
+    """Hold the statistics and the hottest zone (°C) to LIMITS, the commit rate to the panels' own refresh."""
     failures = []
     if not isinstance(frames, dict):
         return {"status": "failed", "failures": ["msm-frame-stats wrote no statistics"], "limits": LIMITS}
@@ -49,11 +59,12 @@ def verdict(frames: object, hottest_c: float | None) -> dict[str, Any]:
     if window <= 0 or commits <= 0:
         return {"status": "failed", "failures": ["no commits in the measured window"], "limits": LIMITS}
     hz = commits / window
+    limits = dict(LIMITS, commit_hz_min=round(COMMIT_SHARE * display_hz(frames), 2))
     late = 100.0 * (frames.get("late") or 0) / commits
     stalls = frames.get("stalls") or 0
 
-    if hz < LIMITS["commit_hz_min"]:
-        failures.append(f"{hz:.1f} commits/s, below {LIMITS['commit_hz_min']:.1f}")
+    if hz < limits["commit_hz_min"]:
+        failures.append(f"{hz:.1f} commits/s, below {limits['commit_hz_min']:.1f}")
     if late > LIMITS["late_percent_max"]:
         failures.append(f"{late:.2f} % late commits, above {LIMITS['late_percent_max']} %")
     if stalls > LIMITS["stalls_max"]:
@@ -82,7 +93,7 @@ def verdict(frames: object, hottest_c: float | None) -> dict[str, Any]:
         "web_helper_gpu_percent": frames.get("web_helper_gpu_percent"),
         "hottest_c": hottest_c,
         "max_interval_ms": frames.get("max_interval_ms"),
-        "limits": LIMITS,
+        "limits": limits,
     }
 
 

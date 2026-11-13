@@ -64,6 +64,14 @@ class VerdictTests(unittest.TestCase):
                 self.assertEqual(len(v["failures"]), 1, v["failures"])
                 self.assertIn(words, v["failures"][0])
 
+    def test_the_rate_is_the_panels_own(self):
+        # At 72 Hz (the Frame's default per-app rate) 72 commits/s pass, and a slower window at 90 Hz fails.
+        at72 = dict(stats(commits=2160, seconds=30.0, late=2, stalls=0), vblank_hz=72.0059)
+        v = perf.verdict(at72, 61.5)
+        self.assertEqual(v["status"], "passed", v["failures"])
+        self.assertEqual(v["limits"]["commit_hz_min"], 68.4)
+        self.assertEqual(perf.verdict(dict(at72, vblank_hz=89.99), 61.5)["status"], "failed")
+
     def test_missing_or_empty_statistics_fail(self):
         self.assertEqual(perf.verdict(None, 60.0)["status"], "failed")
         self.assertIn("no commits", perf.verdict({"target": "msm", "commits": 0}, 60.0)["failures"][0])
