@@ -6,6 +6,9 @@ ConditionPathExists=/sys/class/remoteproc
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# The file the kernel's q6 calibration driver loads when the DSP starts, from PICO OS's calibration
+# databases on the headset (the image links /usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin here).
+ExecStartPre=/usr/bin/pico4-audiocal export /run/pico4/audio-calibration.bin
 ExecStart=/usr/libexec/pico4/remoteproc-boot adsp
 
 [Install]

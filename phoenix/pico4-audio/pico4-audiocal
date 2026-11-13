@@ -8,7 +8,7 @@ reads the same blocks for the two paths the system uses: the speakers (deep-buff
 acdb device 15) and the handset microphone (record, acdb device 4).
 
   pico4-audiocal show [--acdb DIR]   the topologies and blocks, as JSON
-  pico4-audiocal export [--acdb DIR] [FILE]   the file the driver loads (at image build)
+  pico4-audiocal export [--acdb DIR] [FILE]   the file the driver loads (pico4-adsp.service, at boot)
 """
 
 from __future__ import annotations
@@ -247,7 +247,7 @@ def mainline_file(cal: dict) -> bytes:
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    """Write the kernel's file; at image build, into the image's tree."""
+    """Write the kernel's file."""
     data = mainline_file(lookup(args.acdb))
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

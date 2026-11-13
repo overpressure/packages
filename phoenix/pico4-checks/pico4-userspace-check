@@ -103,6 +103,12 @@ need "every physical block device but userdata read-only" [ -z "$writable" ]
 need "userdata writable" [ "$(cat "/sys/class/block/${data_dev##*/}/ro" 2>/dev/null)" = 0 ]
 need "system image mounted read-only" sh -c "findmnt -no OPTIONS / | grep -q '^ro,'"
 need "data on userdata" [ "$(findmnt -no SOURCE /data)" = "$data_dev" ]
+# PICO OS's files (the image holds only links): its modem, dsp and bluetooth partitions mounted
+# read-only by preinit, and the data partition's copy that the install writes from the backup.
+for part in modem dsp bluetooth; do
+	need "PICO OS's $part partition mounted read-only" sh -c "findmnt -no OPTIONS /run/pico4/firmware/$part | grep -q '^ro'"
+done
+need "PICO OS's files on the data partition (dev install writes them)" [ -f /var/lib/pico4-stock/manifest.json ]
 
 # -- services and SteamOS userspace -------------------------------------------
 seats=$(loginctl list-seats --no-legend 2>/dev/null | awk '{print $1}')
