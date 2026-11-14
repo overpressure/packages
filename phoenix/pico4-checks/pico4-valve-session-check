@@ -14,7 +14,7 @@
 # The session keeps the GPU busy and heats the headset quickly: SECONDS (default
 # 30) bounds the run after startup. The hottest thermal zone and the fan daemon's
 # state (docs/cooling.md) are recorded before and after. Validated on the host by
-# devices/phoenix/tooling/userspace.py (validate_valve_session).
+# overpressure/phoenix's tooling/userspace.py (validate_valve_session).
 set -u
 seconds=30
 while [ $# -gt 0 ]; do

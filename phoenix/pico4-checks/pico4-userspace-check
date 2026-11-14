@@ -5,7 +5,7 @@
 #
 #   pico4-userspace-check [--wait SECONDS] [--no-vulkan]
 #
-# Validated on the host by devices/phoenix/tooling/userspace.py (validate_check).
+# Validated on the host by overpressure/phoenix's tooling/userspace.py (validate_check).
 set -u
 wait_s=180
 vulkan=1
