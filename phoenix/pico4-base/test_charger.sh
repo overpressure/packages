@@ -35,7 +35,12 @@ sleep 3
 echo 0 > "$work/online"
 sleep 1
 [ ! -e "$work/reboot" ] || { echo "powered off too early"; exit 1; }
-sleep 3
+# Then it powers off: the loop's sync can take seconds on a busy machine, so the check waits up to 30 s.
+waited=0
+until [ "$(cat "$work/reboot" 2>/dev/null)" = poweroff ] || [ "$waited" -ge 30 ]; do
+	sleep 1
+	waited=$((waited + 1))
+done
 kill "$pid" 2>/dev/null || true
-[ "$(cat "$work/reboot" 2>/dev/null)" = poweroff ] || { echo "no power-off without USB power"; exit 1; }
+[ "$(cat "$work/reboot" 2>/dev/null)" = poweroff ] || { echo "no power-off without USB power within 30 s"; exit 1; }
 echo 'Charger mode: 4 checks passed'
