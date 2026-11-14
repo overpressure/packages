@@ -18,8 +18,6 @@ RestartSec=1
 # As PICO OS's init runs its core services, pvrtrackingservice among them: never the OOM
 # killer's choice (docs/userspace.md#memory).
 OOMScoreAdjust=-1000
-# Its lines under its own name, not the shell's. libSlam times every optical-flow step, about
-# 200 lines a second while it tracks, each twice (its own print and liblog's stderr copy): PICO OS
-# keeps them in logcat's RAM ring only, so they stay out of the journal; every other line stays.
+# Its lines under its own name, not the shell's (pico4-slamd keeps libSlam's own stdio and its
+# per-frame timing out of the journal, as PICO OS does).
 SyslogIdentifier=pico4-slamd
-LogFilterPatterns=~OpticalFlowLk use_time

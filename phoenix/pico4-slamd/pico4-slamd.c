@@ -212,7 +212,7 @@ settle_room(struct pico4_slam_feed *feed, uint32_t generation, void *h, relocinf
 	map[sizeof(map) - 1] = '\0';
 	// The driver keeps the previous room (and universe) while the new one is written.
 	__atomic_store_n(&feed->room_state, 0, __ATOMIC_RELEASE);
-	fprintf(stderr, "pico4-slamd: map %s (getRelocMapInfo %d, status %d); relocalised boundary %d points\n", map,
+	dprintf(slamd_log_fd, "pico4-slamd: map %s (getRelocMapInfo %d, status %d); relocalised boundary %d points\n", map,
 	        info_ret, info_status, seen_n);
 	uint32_t state = 2;
 	uint64_t id = 0;
@@ -221,7 +221,7 @@ settle_room(struct pico4_slam_feed *feed, uint32_t generation, void *h, relocinf
 		room_shape(id, shape);
 		double yaw, t[3];
 		double rms = room_fit((const double(*)[3])g_seen, (const double(*)[3])shape, 4, &yaw, t, atan2, sin, cos, sqrt);
-		fprintf(stderr,
+		dprintf(slamd_log_fd,
 		        "pico4-slamd: relocalised in a saved room (id %09llx): turn %.2f deg, shift %.3f %.3f %.3f m, residual "
 		        "%.4f m\n",
 		        (unsigned long long)id, yaw * 57.29577951308232, t[0], t[1], t[2], rms);
@@ -239,18 +239,18 @@ settle_room(struct pico4_slam_feed *feed, uint32_t generation, void *h, relocinf
 				for (int i = 0; i < 4; i++) {
 					room_to_session(shape[i], c, sn, t, g_seen[i]);
 				}
-				fprintf(stderr, "pico4-slamd: the room now has id %09llx (universe from %s)\n", (unsigned long long)id,
+				dprintf(slamd_log_fd, "pico4-slamd: the room now has id %09llx (universe from %s)\n", (unsigned long long)id,
 				        map);
 			}
 			write_boundary(SESSION_BOUNDARY, (const double(*)[3])g_seen, 4);
 		}
 	} else if (seen_n > 0) {
-		fprintf(stderr, "pico4-slamd: the relocalised boundary is no room shape\n");
+		dprintf(slamd_log_fd, "pico4-slamd: the relocalised boundary is no room shape\n");
 	}
 	if (state != 1) {
 		id = new_room_id();
 		room_shape(id, shape);
-		fprintf(stderr, "pico4-slamd: a new room (id %09llx); its map is saved at the stop\n", (unsigned long long)id);
+		dprintf(slamd_log_fd, "pico4-slamd: a new room (id %09llx); its map is saved at the stop\n", (unsigned long long)id);
 		write_boundary(SESSION_BOUNDARY, (const double(*)[3])shape, 4);
 	}
 	room_identity(id, feed->room_uuid, sizeof(feed->room_uuid));
@@ -383,7 +383,7 @@ ae_thread(void *arg)
 		flags = 0;
 		c->runs++;
 		if (ret != last_ret) {
-			fprintf(stderr, "pico4-slamd: auto exposure %s\n",
+			dprintf(slamd_log_fd, "pico4-slamd: auto exposure %s\n",
 			        ret == 0   ? "detecting the mains frequency"
 			        : ret == 1 ? "found the frame rate off the mains frequency (flicker); the station keeps its rate"
 			                   : "running");
@@ -404,7 +404,7 @@ ae_thread(void *arg)
 			have_sent = 1;
 			__atomic_fetch_add(&feed->ae_written, 1, __ATOMIC_RELEASE);
 			if (c->sent++ % 50 == 0) {
-				fprintf(stderr, "pico4-slamd: exposure %u/%u %u/%u %u/%u %u/%u (lines/gain per camera), %llu of %llu sets\n",
+				dprintf(slamd_log_fd, "pico4-slamd: exposure %u/%u %u/%u %u/%u %u/%u (lines/gain per camera), %llu of %llu sets\n",
 				        lines[0], gains[0], lines[1], gains[1], lines[2], gains[2], lines[3], gains[3],
 				        (unsigned long long)c->sent, (unsigned long long)c->runs);
 			}
@@ -420,13 +420,13 @@ load_ae(void)
 {
 	const char *env = getenv("PICO4_SLAMD_AE");
 	if (env != NULL && strcmp(env, "0") == 0) {
-		fprintf(stderr, "pico4-slamd: auto exposure left to the driver (PICO4_SLAMD_AE=0)\n");
+		dprintf(slamd_log_fd, "pico4-slamd: auto exposure left to the driver (PICO4_SLAMD_AE=0)\n");
 		return 0;
 	}
 	void *lib = dlopen("libExposureImageProcess.so", RTLD_NOW);
 	expo_fn predict = lib != 0 ? (expo_fn)dlsym(lib, "ExposurePredict") : 0;
 	if (predict == 0) {
-		fprintf(stderr, "pico4-slamd: no auto exposure (%s); the driver's runs\n", lib != 0 ? "ExposurePredict" : dlerror());
+		dprintf(slamd_log_fd, "pico4-slamd: no auto exposure (%s); the driver's runs\n", lib != 0 ? "ExposurePredict" : dlerror());
 	}
 	return predict;
 }
@@ -493,7 +493,7 @@ camera_vendor(struct pico4_slam_feed *feed, uint32_t generation)
 				int ok = write(fd, json, (size_t)n) == n;
 				close(fd);
 				ok = ok && rename(OTP_PATH ".new", OTP_PATH) == 0;
-				fprintf(stderr, "pico4-slamd: camera_otp %s\n", ok ? "saved" : "not saved");
+				dprintf(slamd_log_fd, "pico4-slamd: camera_otp %s\n", ok ? "saved" : "not saved");
 				if (ok) {
 					memcpy(feed->otp_saved, ids, sizeof(ids)); // the driver's next start reads no OTP
 				}
@@ -503,7 +503,7 @@ camera_vendor(struct pico4_slam_feed *feed, uint32_t generation)
 			from = "none: the station gave no ids";
 		}
 	}
-	fprintf(stderr, "pico4-slamd: camera module ids %u,%u,%u,%u (%s)\n", ids[0], ids[1], ids[2], ids[3], from);
+	dprintf(slamd_log_fd, "pico4-slamd: camera module ids %u,%u,%u,%u (%s)\n", ids[0], ids[1], ids[2], ids[3], from);
 	return ids[0];
 }
 
@@ -519,7 +519,7 @@ lsc_table(int vendor)
 		return lsc;
 	}
 	const char *file = isp_lsc_file(vendor);
-	fprintf(stderr, "pico4-slamd: camera vendor %d: %s\n", vendor, file != NULL ? file : "no lens shading");
+	dprintf(slamd_log_fd, "pico4-slamd: camera vendor %d: %s\n", vendor, file != NULL ? file : "no lens shading");
 	return file;
 }
 
@@ -536,7 +536,7 @@ load_tables(int vendor)
 		char path[256];
 		snprintf(path, sizeof(path), CONFIG_DIR "%s", lsc);
 		if (load_table(path, tmp, ISP_W * ISP_H) < 0) {
-			fprintf(stderr, "pico4-slamd: cannot read the lens-shading table %s\n", path);
+			dprintf(slamd_log_fd, "pico4-slamd: cannot read the lens-shading table %s\n", path);
 			return -1;
 		}
 		for (int i = 0; i < ISP_W * ISP_H; i++) {
@@ -544,7 +544,7 @@ load_tables(int vendor)
 		}
 	}
 	if (load_table(CONFIG_DIR "config_gma10.txt", tmp, 1024) < 0) {
-		fprintf(stderr, "pico4-slamd: cannot read " CONFIG_DIR "config_gma10.txt\n");
+		dprintf(slamd_log_fd, "pico4-slamd: cannot read " CONFIG_DIR "config_gma10.txt\n");
 		return -1;
 	}
 	for (int i = 0; i < 1024; i++) {
@@ -558,7 +558,7 @@ open_feed(int gid)
 {
 	int fd = open(PICO4_SLAM_FEED_PATH, O_RDWR | O_CREAT | O_CLOEXEC, 0660);
 	if (fd < 0 || ftruncate(fd, sizeof(struct pico4_slam_feed)) < 0) {
-		fprintf(stderr, "pico4-slamd: cannot create " PICO4_SLAM_FEED_PATH "\n");
+		dprintf(slamd_log_fd, "pico4-slamd: cannot create " PICO4_SLAM_FEED_PATH "\n");
 		return 0;
 	}
 	if (gid >= 0) {
@@ -728,10 +728,35 @@ tracker_stop(const struct tracker *t, void *h)
 	t->destroy(h);
 }
 
+int slamd_log_fd = 2;
+
+/*
+ * As PICO OS's init runs its services: their stdout and stderr on /dev/null, and what they log
+ * through Android's log (stubs.c). libSlam prints each of its log lines on its stdio as well, its
+ * per-frame timing among them, about 200 lines a second while it tracks; that copy goes nowhere, as
+ * on PICO OS. This program's own lines and the Android log's go to a copy of the service's stderr,
+ * the journal: PICO4_SLAMD_LOG_FD names it for stubs.c.
+ */
+static void
+quiet_stock_stdio(void)
+{
+	int journal = dup(2);
+	int null = open("/dev/null", O_RDWR);
+	if (journal < 0 || null < 0 || dup2(null, 1) < 0 || dup2(null, 2) < 0) {
+		return; // stdio as it was: everything still reaches the journal
+	}
+	close(null);
+	slamd_log_fd = journal;
+	char fd[16];
+	snprintf(fd, sizeof fd, "%d", journal);
+	setenv("PICO4_SLAMD_LOG_FD", fd, 1);
+}
+
 int
 main(int argc, char **argv, char **envp)
 {
 	(void)envp;
+	quiet_stock_stdio();
 	int gid = argc > 1 ? atoi(argv[1]) : -1;
 	struct pico4_slam_feed *feed = open_feed(gid);
 	if (feed == 0) {
@@ -754,7 +779,7 @@ main(int argc, char **argv, char **envp)
 
 	void *lib = dlopen("libSlam.so", RTLD_NOW);
 	if (!lib) {
-		fprintf(stderr, "pico4-slamd: %s\n", dlerror());
+		dprintf(slamd_log_fd, "pico4-slamd: %s\n", dlerror());
 		return 1;
 	}
 	const struct tracker t = {
@@ -773,14 +798,14 @@ main(int argc, char **argv, char **envp)
 	relocinfo_fn relocinfo = (relocinfo_fn)dlsym(lib, "getRelocMapInfo");
 	if (!t.create || !t.set || !t.start || !image || !imu || !result || !t.reg || !t.prestop || !t.stop ||
 	    !t.destroy) {
-		fprintf(stderr, "pico4-slamd: libSlam.so lacks a function of its interface\n");
+		dprintf(slamd_log_fd, "pico4-slamd: libSlam.so lacks a function of its interface\n");
 		return 1;
 	}
 	// The see-through's depth mesh.
 	g_vst = vst_start(feed) == 0;
 	void *h = tracker_start(&t, feed);
 	if (h == 0) {
-		fprintf(stderr, "pico4-slamd: createHandle failed\n");
+		dprintf(slamd_log_fd, "pico4-slamd: createHandle failed\n");
 		return 1;
 	}
 	int64_t started = now_ns(CLOCK_MONOTONIC), reloc_checked = 0;
@@ -803,7 +828,7 @@ main(int argc, char **argv, char **envp)
 	double last_plane_height = 0;
 	signal(SIGTERM, on_stop_signal);
 	signal(SIGINT, on_stop_signal);
-	fprintf(stderr, "pico4-slamd: tracking for driver generation %u\n", generation);
+	dprintf(slamd_log_fd, "pico4-slamd: tracking for driver generation %u\n", generation);
 
 	static struct frames_ctx frames;
 	frames.feed = feed;
@@ -821,7 +846,7 @@ main(int argc, char **argv, char **envp)
 	}
 	pthread_t thread;
 	if (pthread_create(&thread, 0, frame_thread, &frames) != 0) {
-		fprintf(stderr, "pico4-slamd: cannot start the frame thread\n");
+		dprintf(slamd_log_fd, "pico4-slamd: cannot start the frame thread\n");
 		return 1;
 	}
 
@@ -841,9 +866,8 @@ main(int argc, char **argv, char **envp)
 		feed->slamd_heartbeat_ns = (uint64_t)now;
 		if (g_stop || __atomic_load_n(&feed->generation, __ATOMIC_ACQUIRE) != generation) {
 			// As PICO OS's service stops it: the map is saved (with a boundary) on the way.
-			fprintf(stderr, "pico4-slamd: %s; stopping the tracker\n",
+			dprintf(slamd_log_fd, "pico4-slamd: %s; stopping the tracker\n",
 			        g_stop ? "asked to stop" : "the driver started again, a new tracker follows");
-			fflush(stderr);
 			__atomic_store_n(&frames.stop, 1, __ATOMIC_RELEASE);
 			pthread_join(thread, 0);
 			if (frames.ae != 0) {
@@ -853,8 +877,7 @@ main(int argc, char **argv, char **envp)
 			}
 			vst_stop();
 			tracker_stop(&t, h);
-			fprintf(stderr, "pico4-slamd: tracker stopped\n");
-			fflush(stderr);
+			dprintf(slamd_log_fd, "pico4-slamd: tracker stopped\n");
 			exit(0);
 		}
 		// The room at the tracker's relocalisation, once its copy of the saved room's boundary is
@@ -866,7 +889,7 @@ main(int argc, char **argv, char **envp)
 			reloc_checked = now;
 			if (!relocalised && read_boundary(RELOCALISED_BOUNDARY, g_seen) == 4) {
 				relocalised = true;
-				fprintf(stderr, "pico4-slamd: the tracker relocalised in a saved map %.1f s after its start\n",
+				dprintf(slamd_log_fd, "pico4-slamd: the tracker relocalised in a saved map %.1f s after its start\n",
 				        (double)(now - started) / 1e9);
 				settle_room(feed, generation, h, relocinfo);
 				room_settled = true;
@@ -878,7 +901,7 @@ main(int argc, char **argv, char **envp)
 			if (fr != floor_requests) {
 				floor_requests = fr;
 				t.set(h, "plane", "1");
-				fprintf(stderr, "pico4-slamd: ground detection again (room setup)\n");
+				dprintf(slamd_log_fd, "pico4-slamd: ground detection again (room setup)\n");
 			}
 		}
 		if (input_since == 0 && __atomic_load_n(&frames.sets_fed, __ATOMIC_RELAXED) != sets_at_start) {
@@ -938,7 +961,7 @@ main(int argc, char **argv, char **envp)
 			const double plane_moved = plane_height - last_plane_height;
 			if (plane_status != last_plane_status ||
 			    (plane_status != 0 && (plane_moved > 0.01 || plane_moved < -0.01))) {
-				fprintf(stderr, "pico4-slamd: ground status %d, height %.3f m (head at %.3f %.3f %.3f)\n",
+				dprintf(slamd_log_fd, "pico4-slamd: ground status %d, height %.3f m (head at %.3f %.3f %.3f)\n",
 				        plane_status, plane_height, p->position[0], p->position[1], p->position[2]);
 				last_plane_status = plane_status;
 				last_plane_height = plane_height;
@@ -949,7 +972,7 @@ main(int argc, char **argv, char **envp)
 			// any confidence clears it.
 			if (p->confidence == 0 && last_confidence == 1) {
 				lost_since = now_ns(CLOCK_BOOTTIME);
-				fprintf(stderr, "pico4-slamd: tracking lost (error 0x%x)\n", (unsigned)p->error);
+				dprintf(slamd_log_fd, "pico4-slamd: tracking lost (error 0x%x)\n", (unsigned)p->error);
 			} else if (p->confidence != 0) {
 				lost_since = 0;
 			}
@@ -965,15 +988,14 @@ main(int argc, char **argv, char **envp)
 			// relocalises in the room as at the start.
 			lost_since = 0;
 			restarts++;
-			fprintf(stderr, "pico4-slamd: lost for over %lld s; restarting the tracker (restart %llu)\n",
+			dprintf(slamd_log_fd, "pico4-slamd: lost for over %lld s; restarting the tracker (restart %llu)\n",
 			        (long long)(restart_ns / 1000000000LL), (unsigned long long)restarts);
-			fflush(stderr);
 			__atomic_store_n(&frames.stop, 1, __ATOMIC_RELEASE);
 			pthread_join(thread, 0);
 			tracker_stop(&t, h);
 			h = tracker_start(&t, feed);
 			if (h == 0) {
-				fprintf(stderr, "pico4-slamd: createHandle failed on the restart\n");
+				dprintf(slamd_log_fd, "pico4-slamd: createHandle failed on the restart\n");
 				return 1;
 			}
 			started = now_ns(CLOCK_MONOTONIC);
@@ -986,15 +1008,14 @@ main(int argc, char **argv, char **envp)
 			frames.sr = __atomic_load_n(&feed->sets_written, __ATOMIC_ACQUIRE);
 			__atomic_store_n(&frames.stop, 0, __ATOMIC_RELEASE);
 			if (pthread_create(&thread, 0, frame_thread, &frames) != 0) {
-				fprintf(stderr, "pico4-slamd: cannot start the frame thread again\n");
+				dprintf(slamd_log_fd, "pico4-slamd: cannot start the frame thread again\n");
 				return 1;
 			}
-			fprintf(stderr, "pico4-slamd: tracker started again\n");
-			fflush(stderr);
+			dprintf(slamd_log_fd, "pico4-slamd: tracker started again\n");
 		}
 		if (now >= report) {
 			double cpu = (double)(now_ns(CLOCK_PROCESS_CPUTIME_ID) - cpu0) / (double)(now - wall0);
-			fprintf(stderr,
+			dprintf(slamd_log_fd,
 			        "pico4-slamd: %llu frame sets, %llu IMU samples, %llu tracked poses, %llu skipped; IMU at "
 			        "%.1f C%s; pose %.1f ms after its sample, longest gap between poses %.1f ms; CPU %.0f %% of "
 			        "one core\n",
@@ -1004,7 +1025,6 @@ main(int argc, char **argv, char **envp)
 			        known ? "" : " (none reported, default)", (double)(now_ns(CLOCK_MONOTONIC) - e.ts_ns) / 1e6,
 			        (double)longest_gap / 1e6, 100.0 * cpu);
 			longest_gap = 0;
-			fflush(stderr);
 			report = now + 10000000000LL;
 		}
 	}

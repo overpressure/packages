@@ -91,13 +91,12 @@ mesh_ready(void)
 	g_vst.meshes++;
 	g_vst.latency_sum += now - m->ts_ns;
 	if (now >= g_vst.report_at) {
-		fprintf(stderr,
+		dprintf(slamd_log_fd,
 		        "pico4-slamd: %llu depth meshes (%u vertices, %u triangles), %.0f ms after their pair; %llu pairs "
 		        "and %llu point sets fed, %llu meshes too big\n",
 		        (unsigned long long)g_vst.meshes, n, idx / 3,
 		        g_vst.meshes ? (double)g_vst.latency_sum / (double)g_vst.meshes / 1e6 : 0.0,
 		        (unsigned long long)g_vst.fed, (unsigned long long)g_vst.point_sets, (unsigned long long)g_vst.too_big);
-		fflush(stderr);
 		g_vst.report_at = now + 10000000000LL;
 	}
 }
@@ -108,7 +107,7 @@ vst_start(struct pico4_slam_feed *feed)
 	g_vst.feed = feed;
 	void *lib = dlopen("libphotoid.so", RTLD_NOW);
 	if (lib == 0) {
-		fprintf(stderr, "pico4-slamd: no see-through depth mesh: %s\n", dlerror());
+		dprintf(slamd_log_fd, "pico4-slamd: no see-through depth mesh: %s\n", dlerror());
 		return -1;
 	}
 	start_fn start = (start_fn)dlsym(lib, "StartVstPipeline");
@@ -120,7 +119,7 @@ vst_start(struct pico4_slam_feed *feed)
 	g_vst.points = (points_fn)dlsym(lib, "SetSlamPointsCloud");
 	g_vst.stop = (stop_fn)dlsym(lib, "StopVstPipeline");
 	if (!start || !mesh_buffer || !callback || !lock || !g_vst.feed_fn || !g_vst.points || !g_vst.stop) {
-		fprintf(stderr, "pico4-slamd: libphotoid.so lacks a function of its interface\n");
+		dprintf(slamd_log_fd, "pico4-slamd: libphotoid.so lacks a function of its interface\n");
 		return -1;
 	}
 	g_vst.vertices = malloc(MESH_BYTES);
@@ -134,7 +133,7 @@ vst_start(struct pico4_slam_feed *feed)
 	lock(mesh_lock, mesh_unlock);
 	callback(mesh_ready);
 	int ok = start();
-	fprintf(stderr, "pico4-slamd: see-through depth mesh (libphotoid %d): %s\n", version ? version() : -1,
+	dprintf(slamd_log_fd, "pico4-slamd: see-through depth mesh (libphotoid %d): %s\n", version ? version() : -1,
 	        ok == 1 ? "started" : "did not start");
 	g_vst.running = ok == 1;
 	return g_vst.running ? 0 : -1;

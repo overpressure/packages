@@ -23,10 +23,14 @@ typedef struct
 } timespec_t;
 
 int fprintf(void *, const char *, ...);
+int dprintf(int, const char *, ...);
 int snprintf(char *, size_t, const char *, ...);
 int vsnprintf(char *, size_t, const char *, va_list);
 int fflush(void *);
 extern void *stderr;
+// Where pico4-slamd's own lines go (pico4-slamd.c, vst.c): the journal, through the copy of the
+// service's stderr that main keeps when it sends the stock libraries' stdio to /dev/null.
+extern int slamd_log_fd;
 void *malloc(size_t);
 void *calloc(size_t, size_t);
 void free(void *);
@@ -52,6 +56,9 @@ int pthread_create(pthread_t *, const void *, void *(*)(void *), void *);
 int pthread_join(pthread_t, void **);
 void (*signal(int, void (*)(int)))(int);
 ssize_t write(int, const void *, size_t);
+int dup(int);
+int dup2(int, int);
+int setenv(const char *, const char *, int);
 int rename(const char *, const char *);
 int unlink(const char *);
 double atan2(double, double);

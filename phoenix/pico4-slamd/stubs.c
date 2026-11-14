@@ -2,14 +2,35 @@
 // SPDX-License-Identifier: Unlicense
 /*
  * Preloaded into PICO OS's tracker processes (libpico4-slam-stubs.so): there is no logd and no
- * property area in the tracker's root, so Android's log calls go to stderr (the journal) and
- * property lookups find nothing, which the tracker's defaults cover. Verbose and debug log
- * lines are dropped unless PICO4_SLAMD_DEBUG is set. libphotoid's CVP session is answered here
+ * property area in the tracker's root, so Android's log calls go to the journal (pico4-slamd's
+ * copy of its stderr, PICO4_SLAMD_LOG_FD, else stderr) and property lookups find nothing, which
+ * the tracker's defaults cover. Verbose and debug lines are dropped, and so are libSlam's own
+ * informational lines (tag SLAM: its per-frame timing, which PICO OS keeps in logcat's RAM ring
+ * only), unless PICO4_SLAMD_DEBUG is set. libphotoid's CVP session is answered here
  * too (below): the pipeline opens one but takes its depth from a network on the Compute DSP.
  */
 #include "bionic.h"
 
 static const char prio[] = "??VDIWEFS";
+
+// The journal: pico4-slamd's copy of its stderr, else stderr (the other tracker processes).
+static int
+log_fd(void)
+{
+	static int fd = -1;
+	if (fd < 0) {
+		const char *s = getenv("PICO4_SLAMD_LOG_FD");
+		fd = s != NULL && *s != '\0' ? atoi(s) : 2;
+	}
+	return fd;
+}
+
+// The lowest priority a tag's lines reach the journal with, as Android's log.tag.TAG sets it.
+static int
+lowest(const char *tag)
+{
+	return tag != NULL && strcmp(tag, "SLAM") == 0 ? 5 : 4; // ANDROID_LOG_WARN, else ANDROID_LOG_INFO
+}
 
 int
 __android_log_vprint(int p, const char *tag, const char *fmt, va_list ap)
@@ -19,12 +40,12 @@ __android_log_vprint(int p, const char *tag, const char *fmt, va_list ap)
 		const char *d = getenv("PICO4_SLAMD_DEBUG");
 		debug = d != NULL && *d != '\0' && *d != '0';
 	}
-	if (p < 4 && !debug) { // ANDROID_LOG_INFO
+	if (p < lowest(tag) && !debug) {
 		return 0;
 	}
 	char line[1024];
 	vsnprintf(line, sizeof line, fmt, ap);
-	fprintf(stderr, "%c/%s: %s\n", p >= 0 && p < 9 ? prio[p] : '?', tag ? tag : "", line);
+	dprintf(log_fd(), "%c/%s: %s\n", p >= 0 && p < 9 ? prio[p] : '?', tag ? tag : "", line);
 	return 1;
 }
 
@@ -153,7 +174,7 @@ int
 cvpDfs_Sync(void *dfs, const void *left, const void *right, uint32_t a, uint32_t b, void *out)
 {
 	(void)dfs, (void)left, (void)right, (void)a, (void)b, (void)out;
-	fprintf(stderr, "pico4-slamd: libphotoid asked for the CVP's depth, which is not there\n");
+	dprintf(log_fd(), "pico4-slamd: libphotoid asked for the CVP's depth, which is not there\n");
 	return -1;
 }
 

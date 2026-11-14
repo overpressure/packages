@@ -2,6 +2,7 @@
 """pico4-slamd, PICO OS's head tracker's host in its bionic root: its build, cameras, rooms, depth mesh and floor."""
 
 import math
+import re
 import unittest
 from pathlib import Path
 
@@ -27,6 +28,20 @@ class FastRpcBridgeTests(unittest.TestCase):
 
     def test_build_script_stays_lf(self):
         self.assertNotIn(b"\r", (ROOT / "build.sh").read_bytes())
+
+
+class LogTests(unittest.TestCase):
+    def test_the_stock_libraries_stdio_goes_nowhere_and_slamd_s_own_lines_to_the_journal(self):
+        slamd = read(ROOT / "pico4-slamd.c")
+        # As PICO OS's init: stdio on /dev/null before libSlam loads, so its own copy of each line goes nowhere.
+        self.assertLess(slamd.index("\tquiet_stock_stdio();"), slamd.index('dlopen("libSlam.so"'))
+        # stderr is /dev/null then: this program's lines go to the journal's copy of it, or nowhere.
+        for name in ("pico4-slamd.c", "vst.c"):
+            self.assertIsNone(re.search(r"\w+\(\s*stderr\b", read(ROOT / name)), name)
+        # Android's log: libSlam's own informational lines (its per-frame timing) stay out by default.
+        stubs = read(ROOT / "stubs.c")
+        self.assertIn('strcmp(tag, "SLAM") == 0 ? 5 : 4', stubs)
+        self.assertIn('getenv("PICO4_SLAMD_LOG_FD")', stubs)
 
 
 class SlamdThreadTests(unittest.TestCase):
