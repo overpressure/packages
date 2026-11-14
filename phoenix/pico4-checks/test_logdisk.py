@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: Unlicense
 """The installed system's log drive: a journal larger than the drive keeps its newest whole lines."""
 
+import shutil
 import subprocess
 import unittest
 from pathlib import Path
+
+# bash from PATH: on Windows that is Git's, where subprocess would take System32's WSL launcher first.
+BASH = shutil.which("bash")
+NO_BASH = BASH is None or "\\system32\\" in BASH.lower()
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "userspace-logdisk"
@@ -12,16 +17,17 @@ NOTE = "-- the journal's older lines do not fit on the drive"
 
 def tail(text: str, room: int) -> str:
     """Run the drive's journal step on TEXT with ROOM bytes."""
+    # Bytes, not text mode: on Windows text mode writes each newline as CRLF, and the journal grows.
     return subprocess.run(  # noqa: S603  # bash from PATH runs the script under test
-        ["bash", str(SCRIPT), "--tail", str(room)],  # noqa: S607  # bash from PATH
-        input=text,
+        [BASH, str(SCRIPT), "--tail", str(room)],  # noqa: S607  # bash from PATH
+        input=text.encode(),
         capture_output=True,
-        text=True,
         timeout=10,
         check=True,
-    ).stdout
+    ).stdout.decode()
 
 
+@unittest.skipIf(NO_BASH, "runs bash scripts: needs bash on PATH (Git's on Windows, not WSL's)")
 class LogdiskTests(unittest.TestCase):
     def test_a_journal_that_fits_stays_whole(self) -> None:
         journal = "".join(f"[{i:6d}.000000] line {i}\n" for i in range(100))

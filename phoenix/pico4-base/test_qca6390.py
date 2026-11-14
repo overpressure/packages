@@ -4,6 +4,7 @@
 import importlib.machinery
 import importlib.util
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -34,6 +35,7 @@ def run_wlan_address(tmp: str, ip: str, *args: str) -> subprocess.CompletedProce
     )
 
 
+@unittest.skipIf(shutil.which("sh") is None, "runs sh scripts: needs sh on PATH (Git's on Windows)")
 class WifiTests(unittest.TestCase):
     def test_address_script_reads_the_first_interface(self):
         with tempfile.TemporaryDirectory() as tmp:

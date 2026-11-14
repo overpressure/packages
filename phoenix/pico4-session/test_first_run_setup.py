@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+
+# bash from PATH: on Windows that is Git's, where subprocess would take System32's WSL launcher first.
+BASH = shutil.which("bash")
+NO_BASH = BASH is None or "\\system32\\" in BASH.lower()
 
 HERE = Path(__file__).resolve().parent
 LANGUAGE = HERE / "steam-language"
@@ -123,12 +128,13 @@ class LanguageTests(unittest.TestCase):
         systemctl.assert_not_called()
 
 
+@unittest.skipIf(NO_BASH, "runs bash scripts: needs bash on PATH (Git's on Windows, not WSL's)")
 class WaitTests(unittest.TestCase):
     SCRIPT = HERE / "wait-first-run"
 
     def run_script(self, home: str, *args: str) -> int:
         return subprocess.run(  # noqa: S603  # bash from PATH runs the script under test
-            ["bash", str(self.SCRIPT), *args],  # noqa: S607  # bash from PATH
+            [BASH, str(self.SCRIPT), *args],  # noqa: S607  # bash from PATH
             env={"HOME": home, "PATH": "/usr/bin:/bin"},
             capture_output=True,
             timeout=10,
@@ -164,12 +170,13 @@ class WaitTests(unittest.TestCase):
             self.assertEqual(self.run_script(home, "--other"), 2)
 
 
+@unittest.skipIf(NO_BASH, "runs bash scripts: needs bash on PATH (Git's on Windows, not WSL's)")
 class TimezoneTests(unittest.TestCase):
     def test_the_helper_takes_only_zone_names(self):
         for zone in ("", "/etc/passwd", "../../etc/passwd", "Europe/Paris;reboot", "Mars/Olympus"):
             # The helper under test, with made-up zones.
             result = subprocess.run(  # noqa: S603  # bash from PATH runs the helper
-                ["bash", str(TIMEZONE), zone],  # noqa: S607  # bash from PATH
+                [BASH, str(TIMEZONE), zone],  # noqa: S607  # bash from PATH
                 capture_output=True,
                 text=True,
                 check=False,

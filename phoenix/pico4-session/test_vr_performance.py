@@ -9,8 +9,11 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "vr-performance"
 BASH = shutil.which("bash")
+# On Windows the bash from PATH must be Git's: System32's is WSL's launcher, which cannot open these paths.
+NO_BASH = BASH is None or "\\system32\\" in BASH.lower()
 
 
+@unittest.skipIf(NO_BASH, "runs bash scripts: needs bash on PATH (Git's on Windows, not WSL's)")
 class VrPerformanceMainlineTests(unittest.TestCase):
     """A mainline kernel: the same limits on the cpufreq policies, no core_ctl."""
 

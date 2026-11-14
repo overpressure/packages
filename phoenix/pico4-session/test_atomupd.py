@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: Unlicense
 """The atomupd manager: the answers to the queries Valve's branch and update tools make."""
 
+import shutil
 import subprocess
 import unittest
 from pathlib import Path
+
+# bash from PATH: on Windows that is Git's, where subprocess would take System32's WSL launcher first.
+BASH = shutil.which("bash")
+NO_BASH = BASH is None or "\\system32\\" in BASH.lower()
 
 MANAGER = Path(__file__).resolve().parent / "atomupd-manager"
 
@@ -11,13 +16,14 @@ MANAGER = Path(__file__).resolve().parent / "atomupd-manager"
 def manager(*args: str) -> subprocess.CompletedProcess[str]:
     """Run the recipe's atomupd-manager under bash."""
     return subprocess.run(  # noqa: S603  # the recipe's script under bash, no shell
-        ["bash", str(MANAGER), *args],  # noqa: S607  # bash from PATH
+        [BASH, str(MANAGER), *args],  # noqa: S607  # bash from PATH
         capture_output=True,
         text=True,
         check=False,
     )
 
 
+@unittest.skipIf(NO_BASH, "runs bash scripts: needs bash on PATH (Git's on Windows, not WSL's)")
 class AtomupdManagerTests(unittest.TestCase):
     """The queries Valve's steamos-select-branch and steamos-update make."""
 

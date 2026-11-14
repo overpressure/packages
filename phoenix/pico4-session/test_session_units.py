@@ -4,6 +4,7 @@
 import configparser
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -42,6 +43,7 @@ class StartLimitTest(unittest.TestCase):
         self.assertGreater(interval, burst * per_session)
 
 
+@unittest.skipIf(sys.platform == "win32", "its fake ps, chrt and taskset go first on a POSIX PATH")
 class KthreadPrioritiesTest(unittest.TestCase):
     def test_valve_kernel_gets_the_frames_values(self):
         with tempfile.TemporaryDirectory() as tmp:

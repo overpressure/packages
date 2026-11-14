@@ -3,6 +3,7 @@
 
 import os
 import struct
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "clock"
 
 
+@unittest.skipIf(shutil.which("sh") is None, "runs sh scripts: needs sh on PATH (Git's on Windows)")
 class ClockTests(unittest.TestCase):
     def run_clock(self, offset_ms: int, rtc: int, now: int):
         with tempfile.TemporaryDirectory() as tmp:
