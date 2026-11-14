@@ -1,3 +1,5 @@
 # Build output
 /out/
 __pycache__/
+# Logs a test or build leaves next to a recipe never belong to it
+*.log

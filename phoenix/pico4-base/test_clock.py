@@ -22,7 +22,7 @@ class ClockTests(unittest.TestCase):
             bin_dir.mkdir()
             # date: +%s prints the current clock; -s records the clock it was asked to set.
             Path(bin_dir, "date").write_bytes(
-                f'#!/bin/sh\n[ "$1" = +%s ] && {{ echo {now}; exit 0; }}\necho "$@" >> {log}\n'.encode()
+                f'#!/bin/sh\n[ "$1" = +%s ] && {{ echo {now}; exit 0; }}\necho "$@" >> {log.as_posix()}\n'.encode()
             )
             (bin_dir / "date").chmod(0o755)
             env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")

@@ -39,7 +39,7 @@ class WifiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "wlan_mac.bin").write_bytes(b"Intf0MacAddress=00AA11BB22CC\nIntf1MacAddress=00AA11BB22CD\n")
             log = Path(tmp, "ip.log")
-            r = run_wlan_address(tmp, f'echo "$@" >> {log}')
+            r = run_wlan_address(tmp, f'echo "$@" >> {log.as_posix()}')
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(
                 log.read_text().splitlines(),
