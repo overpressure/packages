@@ -15,7 +15,7 @@ source=(pico4-fan pico4-fan.service
         powerkey pico4-powerkey.service 50-pico4-power-key.conf
         50-pico4-power.preset
         test_fan.py test_battery_guard.py test_power_key.py)
-sha256sums=('b7ed9864583e37cc0da28ac2d4e257d52f1a651efc39d54267bc8e7798b8edbd'
+sha256sums=('57253a1c54a768097b72466f2b330d98a4efa7b6aeed2b087484670fa37738d2'
             '2d337cfee38033e97eafbbe0fa9a27b445b32b91c1f59b77d1f0358c6dfbcc93'
             '9956f154529309f757d0501dcb5387c735b046dff87539b7bb15a216c51c3a9f'
             'a2533cfaec6db8847244dc641eeef5fbc11b962be8cc52ba3c86950868003f13'
@@ -23,7 +23,7 @@ sha256sums=('b7ed9864583e37cc0da28ac2d4e257d52f1a651efc39d54267bc8e7798b8edbd'
             '19f248403bfba342c224978e08895a450327c4d47d7aa7e1d8e201e406d53cf5'
             'fccd2ff01aa3835c45a63fe7e2ef894b51d9008b04bf4f2214659a6788e6764d'
             '96909ecb295fe2f72e5967f279a468d2670a9b514c261ee8fbdf42035dc98aa7'
-            'acf92dea11c72597ede2165c4384ce403134c2e03d5a292b9fdaf66af9a0126d'
+            '2385dd5a7fdda2e73e3246e9cf531d2c58d142e92a6dde40fc66d91c710d07ef'
             '5f5df141aef42f012da84adb920ac3db4e4a8620bc1dd0059d88fc8579f43251'
             'e403426890c10267a02693e04e06ddbbfc0be30fd3130aa089e2b80c921d1886')
 

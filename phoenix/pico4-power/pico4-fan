@@ -483,7 +483,20 @@ def log_stderr(message: str) -> None:
 
 
 def poweroff() -> None:
-    """Power off cleanly, as the power key's 2 s hold; --no-block keeps the control loop running."""
+    """Power off cleanly, as the power key's 2 s hold; --no-block keeps the control loop running.
+
+    Run where no systemd answers (the headset's build host, a chroot), PICO4_FAN_POWEROFF_SIGNAL names
+    the signal its PID 1 powers off on: SIGRTMIN+4 for systemd, SIGUSR2 for the maintenance stage 1's
+    pico4-init.
+    """
+    name = os.environ.get("PICO4_FAN_POWEROFF_SIGNAL")
+    if name:
+        try:
+            number = signal.SIGRTMIN + int(name[9:]) if name.startswith("SIGRTMIN+") else getattr(signal, name)
+            os.kill(1, number)
+        except (AttributeError, OSError, ValueError) as e:
+            log_stderr(f"power-off by {name} to PID 1: {e}")
+        return
     try:
         subprocess.run(
             ["systemctl", "--no-block", "poweroff"],  # noqa: S607  # systemd's systemctl from the system PATH

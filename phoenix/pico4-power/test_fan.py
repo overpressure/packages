@@ -589,6 +589,26 @@ class DaemonTest(unittest.TestCase):
             fan.poweroff()  # the control loop goes on
         self.assertIn("no systemctl", err.getvalue())
 
+    @unittest.skipUnless(hasattr(fan.signal, "SIGRTMIN"), "needs Linux's signals")
+    def test_where_no_systemd_answers_pid_1_gets_its_power_off_signal(self):
+        # The headset's build host: the maintenance stage 1's pico4-init (SIGUSR2), or systemd (SIGRTMIN+4).
+        for name, number in (("SIGUSR2", fan.signal.SIGUSR2), ("SIGRTMIN+4", fan.signal.SIGRTMIN + 4)):
+            with (
+                mock.patch.dict(os.environ, {"PICO4_FAN_POWEROFF_SIGNAL": name}),
+                mock.patch.object(fan.os, "kill") as kill,
+                mock.patch.object(fan.subprocess, "run") as run,
+            ):
+                fan.poweroff()
+            self.assertEqual((kill.call_args[0], run.called), ((1, number), False), name)
+        with (
+            mock.patch.dict(os.environ, {"PICO4_FAN_POWEROFF_SIGNAL": "SIGNONE"}),
+            mock.patch.object(fan.os, "kill") as kill,
+            contextlib.redirect_stderr(io.StringIO()) as err,
+        ):
+            fan.poweroff()  # the control loop goes on
+        self.assertFalse(kill.called)
+        self.assertIn("SIGNONE", err.getvalue())
+
     def test_dry_run_never_powers_off(self):
         offs = []
         daemon = fan.Daemon(
