@@ -67,16 +67,17 @@ python3 build/shellcheck.py   # every tracked shell script, the recipes' too, do
 
 ## Releases
 
-Every push and pull request builds each package in its own job on an arm64 runner
+Every pull request, push to `main` and tag builds each package in its own job on an arm64 runner
 ([packages.yml](.github/workflows/packages.yml)); one job then writes each layer's database. A package's
 key ([build/plan.py](build/plan.py)) hashes everything its bytes depend on: its recipe folder,
 `build/packages.sh`, the build image's digest and what the build environment takes from the headset's
 definition: `pacman.conf`, `packages.lock` and the packages `packages.txt` takes from the Frame's
-repository. Adding one of the project's packages to `packages.txt` moves no other key. A key built before comes
-from the cache, so a change rebuilds only the packages it touches. A tag `YYYY.MM.DD` (or `YYYY.MM.DD.N`)
-builds every package anew, without the cache, and publishes a release: every layer's packages and
-database, the copyleft packages' sources and `SHA256SUMS`. Released tags never move or disappear (a
-ruleset). The release's download folder is a pacman server for every layer:
+repository. Adding one of the project's packages to `packages.txt` moves no other key. Each key is built once:
+a key built before comes from `main`'s cache or from the artifact an earlier run of this repository left under
+it (a pull request's, never a fork's), so a change builds only the packages it touches, once, on its pull
+request. A tag `YYYY.MM.DD` (or `YYYY.MM.DD.N`) publishes those builds as a release: every layer's packages
+and database, the copyleft packages' sources and `SHA256SUMS`. `main` changes only by pull request, and
+released tags never move or disappear (rulesets). The release's download folder is a pacman server for every layer:
 
 ```ini
 [overpressure-common]

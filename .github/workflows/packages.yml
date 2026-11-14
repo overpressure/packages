@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: Unlicense
-# Every push and pull request: the layout checked, then every package of the headsets' layers built in
-# its own job, natively on arm64, in overpressure's build image pinned by digest. A package whose key
-# (build/plan.py: its recipe, the build script, the image, the headset's definition) was built before
-# comes from the cache. One job then writes each layer's database.
-# A tag (YYYY.MM.DD, or YYYY.MM.DD.N) builds every package anew, without the cache, and publishes them as
-# a release: per layer its packages and its database, and the copyleft packages' complete sources. A
-# release's download folder is a pacman server for every layer.
+# Every pull request, push to main and tag: the layout checked, then every package of the headsets' layers
+# built in its own job, natively on arm64, in overpressure's build image pinned by digest. Each package is
+# built once per key (build/plan.py: its recipe, the build script, the image, the headset's definition):
+# a key built before comes from main's cache, or from the artifact an earlier run of this repository (never
+# a fork's) left under that key, such as the pull request's. One job then writes each layer's database.
+# A tag (YYYY.MM.DD, or YYYY.MM.DD.N) publishes the packages its pull request built as a release: per layer
+# its packages and its database, and the copyleft packages' complete sources. A release's download folder
+# is a pacman server for every layer.
 name: Packages
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
     tags: ["[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]*"]
   pull_request:
   workflow_dispatch:
@@ -59,19 +60,33 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
+      actions: read # an earlier run's build
     env:
       KEY: package-${{ matrix.package.headset }}-${{ matrix.package.name }}-${{ matrix.package.key }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: The cached build
         id: cache
-        if: env.RELEASE != 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: out
           key: ${{ env.KEY }}
-      - name: The package
+      - name: An earlier run's build
+        id: earlier
         if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OURS: "[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == ${{ github.repository_id }})][0].id // empty"
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$KEY&per_page=30" --jq "$OURS")
+          if [ -n "$id" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > earlier.zip
+            mkdir -p out && unzip -q earlier.zip -d out && rm earlier.zip
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "$KEY: built before (artifact $id)"
+          fi
+      - name: The package
+        if: steps.cache.outputs.cache-hit != 'true' && steps.earlier.outputs.found != 'true'
         run: |
           docker run --rm --privileged -v "$PWD:/work" -w /work "$BUILDER" \
             bash build/packages.sh "${{ matrix.package.headset }}" /var/tmp/packages /work/out "${{ matrix.package.name }}"
@@ -90,7 +105,7 @@ jobs:
       - run: ls -lR out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: package-${{ matrix.package.headset }}-${{ matrix.package.name }}
+          name: ${{ env.KEY }}
           path: out/
           if-no-files-found: error
 
