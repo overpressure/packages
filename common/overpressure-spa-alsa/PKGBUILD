@@ -10,7 +10,9 @@ pkgrel=1
 pkgdesc="PipeWire's ALSA plugin with the capture wakeup taken from the clock"
 arch=(aarch64)
 url="https://pipewire.org"
-license=(MIT)
+# PipeWire is MIT, except this plugin: libspa-alsa.so holds PulseAudio's LGPL code (PipeWire's LICENSE),
+# so its release carries the complete sources (build/packages.sh).
+license=(LGPL-2.1-or-later)
 depends=(alsa-lib glibc systemd-libs "pipewire-audio=1:$pkgver")
 makedepends=(meson ninja)
 conflicts=(pico4-spa-alsa)
