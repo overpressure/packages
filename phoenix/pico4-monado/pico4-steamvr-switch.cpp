@@ -17,23 +17,30 @@
 
 #include <cstring>
 
-namespace {
-
-using namespace pico4_overlay;
-
-volatile sig_atomic_t g_stop;
-
 /*
  * vrclient's mailbox client (IVRMailbox_002), as SteamVR's own processes use it: open a mailbox,
  * close it, send a JSON message to another one. open takes a third string, which vrclient copies
  * when it is set; nullptr opens the mailbox (a stray pointer there crashed it in strncpy).
+ *
+ * Outside the anonymous namespace on purpose: vrclient implements it, nothing here does. Declared
+ * with internal linkage, GCC proves that no class overrides it and compiles every call into
+ * __cxa_pure_virtual ("pure virtual method called"), which broke all three switches.
  */
+namespace pico4_switch {
 struct Mailbox
 {
 	virtual uint32_t open(const char *name, uint64_t *handle, const char *third) = 0;
 	virtual uint32_t close(uint64_t handle) = 0;
 	virtual uint32_t send(uint64_t handle, const char *to, const char *json) = 0;
 };
+} // namespace pico4_switch
+
+namespace {
+
+using namespace pico4_overlay;
+using pico4_switch::Mailbox;
+
+volatile sig_atomic_t g_stop;
 
 //! One message to one of SteamVR's mailboxes; 0 when it left.
 int
