@@ -34,7 +34,9 @@ LAYER/RECIPE` writes those after a change.
   `!name` counts as installed without being installed.
 - `packages.lock`: every upstream package of the image, by SHA-256.
 
-overpressure's userspace build assembles the image from this definition.
+Each headset's own repository assembles its image from this definition (the PICO 4's: `scripts/build-userspace.sh`
+in [overpressure/phoenix](https://github.com/overpressure/phoenix)), and pins the release of this repository it
+builds from.
 
 ## Building
 
