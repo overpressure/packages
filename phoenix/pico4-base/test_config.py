@@ -25,6 +25,15 @@ def settings(name: str, separator: str | None = None) -> dict[str, str]:
     return found
 
 
+class ChargerModeTests(unittest.TestCase):
+    """Charger mode starts no Bluetooth setup: its controller refuses the address there."""
+
+    def test_the_bluetooth_units_skip_charger_mode(self):
+        for unit in ("pico4-bt-firmware.service", "pico4-bt-address.service"):
+            unit_section = (HERE / unit).read_text(encoding="utf-8").split("[Service]")[0]
+            self.assertIn("ConditionKernelCommandLine=!androidboot.mode=charger", unit_section.splitlines(), unit)
+
+
 class CoredumpLimitTests(unittest.TestCase):
     """The limit on the core dumps that vrcompositor leaves at each SteamVR stop."""
 

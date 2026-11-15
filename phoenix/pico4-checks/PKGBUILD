@@ -4,7 +4,7 @@
 # boot. The preset enables the log drive and the link samples; the tests run in the build.
 pkgname=pico4-checks
 pkgver=1
-pkgrel=1
+pkgrel=2
 pkgdesc="PICO 4 checks: the system's and the VR session's acceptance checks, the support bundle, the log drive"
 arch=(any)
 url="https://github.com/overpressure/phoenix/tree/main/docs"
@@ -29,7 +29,7 @@ source=(pico4-support-bundle
         test_suspend_check.py)
 sha256sums=('83c000aeb2f6834844c79b5dbac32b76f866f0431461bf89b92415eaff29f8b6'
             '49ee620087f9d92b65a98a664850338b4ff875821c849017a186e74da316fdcf'
-            '872d59c6067841d2ea11eddd1955aa8c3936f84010cb734b7651c9b9e084aee7'
+            '1e6ce79f9c7c15d20bc39765dbe4a309f14aebca3b6c53108711312340abed4c'
             'ad8b81ada874a1121e0a07d5d225af84ef0b57adbd63d17c632ecfd126915a48'
             'fb870b71f6f8a8290a2ba11f93fd83db2f705ba67b5489f2e223e48336d03f9c'
             '9e3e9490cc9192e4063ee140c2ff633dba6b06da9db0f16eac0e485085b47e06'

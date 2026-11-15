@@ -8,6 +8,8 @@ After=pico4-persist.service sys-subsystem-bluetooth-devices-hci0.device
 Wants=sys-subsystem-bluetooth-devices-hci0.device
 Before=bluetooth.service
 ConditionPathExists=/mnt/vendor/persist/pico_bt_mac
+# Charger mode has no Bluetooth: the controller refuses an address there.
+ConditionKernelCommandLine=!androidboot.mode=charger
 
 [Service]
 Type=oneshot

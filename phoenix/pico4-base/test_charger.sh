@@ -25,6 +25,21 @@ mkdir "$work/bin"
 printf '#!/bin/sh\necho "$*" > %s/reboot\nexit 0\n' "$work" > "$work/bin/pico4-reboot"
 chmod +x "$work/bin/pico4-reboot"
 PATH="$work/bin:$PATH"
+
+# The battery in the lenses: the level and whether it charges, for SHOW_SECONDS; not twice at once.
+printf '#!/bin/sh\necho "$*" >> %s/shown\nsleep 2\n' "$work" > "$work/bin/pico4-splash"
+chmod +x "$work/bin/pico4-splash"
+mkdir "$work/battery"
+echo 42 > "$work/battery/capacity"
+echo Charging > "$work/battery/status"
+show_battery "$work/battery"
+show_battery "$work/battery" # still showing: not again
+wait "$SHOW_PID"
+[ "$(cat "$work/shown")" = "--battery 42 1 4" ] || { echo "show_battery: $(cat "$work/shown")"; exit 1; }
+echo Discharging > "$work/battery/status"
+show_battery "$work/battery"
+wait "$SHOW_PID"
+[ "$(tail -n 1 "$work/shown")" = "--battery 42 0 4" ] || { echo "show_battery without the charger: $(tail -n 1 "$work/shown")"; exit 1; }
 # shellcheck disable=SC2034 # the sourced charger's watch_power reads it
 UNPLUGGED_OFF=2
 echo 1 > "$work/online"
@@ -43,4 +58,4 @@ until [ "$(cat "$work/reboot" 2>/dev/null)" = poweroff ] || [ "$waited" -ge 30 ]
 done
 kill "$pid" 2>/dev/null || true
 [ "$(cat "$work/reboot" 2>/dev/null)" = poweroff ] || { echo "no power-off without USB power within 30 s"; exit 1; }
-echo 'Charger mode: 4 checks passed'
+echo 'Charger mode: 6 checks passed'

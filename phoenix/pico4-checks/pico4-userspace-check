@@ -158,10 +158,17 @@ setup_session() { # the setup's units, active or not, one per line
 		user_systemctl is-active "$unit" 2>/dev/null
 	done
 }
+# Charger mode (pico4-charger.target) starts no session, and logind refuses the session user's
+# manager there (boot's nologin stays): a runuser would only fail user@.service and with it the
+# system's state. Nothing is asked as the session user then.
+charger_mode=0
+! grep -qw androidboot.mode=charger /proc/cmdline 2>/dev/null || charger_mode=1
 session_target_state=unknown
+[ "$charger_mode" = 0 ] || session_target_state=charger
 first_run="done"
 setup_states=""
 for _ in $(seq 60); do
+	[ "$charger_mode" = 0 ] || break
 	session_target_state=$(user_systemctl is-active "$session_target" 2>/dev/null)
 	[ "$session_target_state" != active ] || break
 	if [ "$session_target" = gamescope-session.target ] && first_run_pending; then
@@ -176,19 +183,21 @@ done
 # The target came up during the wait: the setup is over.
 [ "$session_target_state" != active ] || first_run="done"
 session_user_state=$(loginctl show-user "$session_user" -p State --value 2>/dev/null)
-session_failed=$(user_systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}')
+session_failed=
+[ "$charger_mode" = 1 ] ||
+	session_failed=$(user_systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}')
 # Device nodes the session user needs in Valve's session (SteamVR's
 # driver_monado and compositor run as steamos).
 access_denied=$(
 	for node in /dev/dri/card0 /dev/spidev0.0 /dev/ttyHS1 /dev/media0 /dev/video0; do
-		[ -e "$node" ] || continue
+		[ "$charger_mode" = 0 ] && [ -e "$node" ] || continue
 		runuser -u "$session_user" -- test -r "$node" -a -w "$node" 2>/dev/null || echo "$node"
 	done
 )
 monado_socket=$(systemctl is-active pico4-monado.socket 2>/dev/null)
 monado_service=$(systemctl is-active pico4-monado.service 2>/dev/null)
-# Valve's session runs where the GPU is (pico4-session.service).
-if [ -e /dev/dri/renderD128 ]; then
+# Valve's session runs where the GPU is (pico4-session.service), not in charger mode.
+if [ -e /dev/dri/renderD128 ] && [ "$charger_mode" = 0 ]; then
 	need "session service active (is: $session_service)" [ "$session_service" = active ]
 	need "session user logged in (is: $session_user_state)" [ "$session_user_state" = active ]
 	if [ "$first_run" = pending ]; then

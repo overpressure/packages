@@ -6,14 +6,30 @@
 # the bootloader boots with androidboot.mode=charger. PICO OS then runs AOSP's charger instead of
 # the system: holding the power key for 2 s starts the system, and 10 s without USB power turn
 # the headset off. The installed system does the same here (pico4-charger.target, which preinit
-# starts instead of the default target): the lenses stay dark, the USB link and SSH come up.
+# starts instead of the default target): the USB link and SSH come up. As AOSP's charger shows the
+# battery when it starts and on a press of the power key, the lenses show the battery's level for
+# SHOW_SECONDS then (pico4-splash --battery), and stay dark otherwise.
 # Sourced with CHARGER_LIB=1, it only defines its functions (test_charger.sh).
 . "${CHARGER_LIBDIR:-/usr/libexec/pico4}/lib.sh"
 
 POWER_ON_HOLD=2
 UNPLUGGED_OFF=10
+SHOW_SECONDS=4
 KEY_POWER=116
 EV_KEY=1
+
+# The battery's level in the lenses for SHOW_SECONDS, unless it is showing already. The bolt shows
+# while the battery charges or is full on the charger.
+# shellcheck disable=SC2120 # the host test passes another battery
+show_battery() {
+	local battery="${1:-/sys/class/power_supply/battery}" level status charging=0
+	[ -z "${SHOW_PID:-}" ] || ! kill -0 "$SHOW_PID" 2>/dev/null || return 0
+	level=$(cat "$battery/capacity" 2>/dev/null) || return 0
+	status=$(cat "$battery/status" 2>/dev/null)
+	case "$status" in Charging | Full) charging=1 ;; esac
+	pico4-splash --battery "$level" "$charging" "$SHOW_SECONDS" &
+	SHOW_PID=$!
+}
 
 # The power key's event device: the PMIC's power-on key.
 power_key_device() {
@@ -52,6 +68,7 @@ watch_key() {
 	while key=$(read_key <&3); do
 		case "$key" in
 		press)
+			show_battery
 			press=$((press + 1))
 			echo "$press" > "$P4_RUN/charger-press"
 			(
@@ -90,4 +107,5 @@ watch_power() {
 
 log "charger mode (androidboot.mode=charger): hold the power key ${POWER_ON_HOLD} s to start the system"
 watch_power &
+show_battery
 watch_key

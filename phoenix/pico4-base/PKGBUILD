@@ -6,7 +6,7 @@
 # The preset enables the services; the tests run in the build.
 pkgname=pico4-base
 pkgver=1
-pkgrel=1
+pkgrel=2
 pkgdesc="PICO 4 system: preinit, storage and recovery policy, USB link, network, clock, firmware probes"
 arch=(any)
 url="https://github.com/overpressure/phoenix/tree/main/docs"
@@ -92,8 +92,8 @@ sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
             '0b6158a8b39b1ad5330d3ea3ca7360aed4f67d1f344c9cf92c4c1e98276d0735'
             '0b69edd53f0d9e8cb907e6d06323b50b91d30c2f7f66b4935a58bd6848db62f5'
             'c37d59e7956d0d393847285855167d5a62ada4e83d3b867232653c5b0bd28c27'
-            '012a2bab2e06f1bcdd8089b4f4a3375d2166c015665f3dfdf27bd9a94a9d5679'
-            '2495007afc234b1110db12cf4fda48bbd0e2569d22c1af078e20af692b9ef580'
+            '55e8972b77936c8499644a542c699c2ceb8fe9cc5d3585798d2cc92a6c9554e9'
+            'ff30a2144d045e7176d7da9ddd4cee759141dcfec60d61e9b547bef73f0f3d86'
             'e6385aadd2349b0f290bb1cf409c724a333ceecc53d153ef798701ddd9bbeed1'
             '04129856899eedf4b744d0d7c0116759a28ef5d56c72ede4d4ac8e5b47550d9f'
             'b83eed7a69a0df58c5c064d63778c8b7a54ee1c91c00c6877466737cc9588068'
@@ -113,7 +113,7 @@ sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
             '8a72e8d0375f04ee2d77e084d68dec3671e60fb55fff3f53b082061a27f400ba'
             '6aa5a39edf0c61554068b9009f1739f77302f00acfa2b464b4ca2e1c4fa337b1'
             '73df2eef1c75bac824d957997a34b7ff60cbf452fb232654b5e99e5fb537055b'
-            '540b2e3b2634f82cea8236a0c7c399f25f0e1ce3a83910a69fb97e63d6611514'
+            '19d8a3e7288431a3abed80992365e51c00ea2ceeb25f6f26d9a24df50de394ea'
             'ebbbd0c3cc36a5eaf78c9f1cafa73526bb59d8959863933c904bbeb9da0eaff4'
             '4558eeb49f836c192e33fa06f5ab2e8d0b95f47ada59e8ef43e74b6bb0b58650'
             'e595217122c5d1d7c1fe2d2102728704659e3ebf9f9bbad044925741d3c95dd6'
@@ -127,11 +127,11 @@ sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
             '9f67cd7728c262fdbea23fa91b4c3ae1607b19e2be5dbed6920c63dd4527ae6e'
             'e1b7bf74abc4b10665eb3ccdd83ab43d050a432e834d870be9faef0fa3fe9152'
             'ca509d34ccacbdcde894d032dc1549cf829821498c6b46e6694378fe69c68271'
-            '1c0ae6468a296c01d5f3ad298bbf9ad1c6e3827b7c60d9e512dd8e7df652ae83'
+            '8886a1a87f0f3a3f123764992deacc61c9af6e802ad05b70a80ac74d815686c6'
             '2b1d293a8b30e06617ac87ac16e2ab82b5d09a4f7fc4c4e7c7c86f193ee35474'
             'efc4c843f5335d5ed72f87585cd0edfa98107957496380580d5b77792ac5e60a'
             '773d6276040a1d5625d1e53aaaccf7ecd380e877454f657c8e293e98fb4ad905'
-            'bde1f6983cc88b0ad032948b613d2c6835c3e7f1848a1c08a50d318b05b44960'
+            '51df9a5f288c1d04cc1de4973ba0a51f1745fab5af4c44f1eee6a1791dfc00af'
             'fc5ed844a4a3b0e698c18331532f6686c6e766467b623890c82a7ef71fbbc0e0')
 
 build() {
