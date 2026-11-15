@@ -7,10 +7,14 @@
 #define _GNU_SOURCE
 
 #include <dlfcn.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 
 #define EXPORT __attribute__((visibility("default")))
@@ -30,9 +34,23 @@
  * slot's PICO meaning (g_input_paths). Frame paths of slots the PICO layout leaves unused stay as
  * they are: the PC binds nothing to them. SteamVR on the headset keeps our type and bindings: only
  * this process's interfaces change.
+ *
+ * Poses: vrlink reads each device's driver pose through IVRClientInternal (slot 12: an 8-byte
+ * header, then a DriverPose_t) and sends it with its driver-from-head transform, which places the
+ * device at world-from-driver * pose * driver-from-head; for our controllers that is the aim pose,
+ * the render models' frame. Valve's Android client sends a PICO 4 controller's OpenXR grip pose
+ * times a fixed offset, and the PC places its PICO 4 model there. So for our controllers the
+ * driver-from-head transform gets aim-to-grip (PICO OS's calibration, our driver's grip pose) times
+ * Valve's offset composed onto it; SteamVR derives the sent point's velocity from it.
  */
 #define VR_SLOT_GET_STRING_PROPERTY 28 // IVRSystem_026::GetStringTrackedDeviceProperty
 #define VR_SLOT_STRING_TO_HANDLE 2     // IVRPaths_002::StringToHandle
+#define VR_SLOT_GET_DRIVER_POSE 12     // IVRClientInternal_XXX: a device's driver pose, as vrlink reads it
+//! Where the DriverPose_t starts in what IVRClientInternal's slot 12 writes.
+#define VR_DRIVER_POSE_OFFSET 8
+#define VR_MAX_DEVICES 64 // k_unMaxTrackedDeviceCount
+//! How long a device's hand stays cached before it is asked again (seconds).
+#define HAND_CACHE_S 1.0
 #define VR_PROP_TRACKING_SYSTEM 1000   // Prop_TrackingSystemName_String
 #define VR_PROP_MODEL_NUMBER 1001      // Prop_ModelNumber_String
 #define VR_PROP_SERIAL_NUMBER 1002     // Prop_SerialNumber_String
@@ -49,9 +67,49 @@
 typedef uint32_t (*vr_get_string_property)(void *self, uint32_t device, int32_t prop, char *value, uint32_t size,
                                            int32_t *error);
 typedef int32_t (*vr_string_to_handle)(void *self, uint64_t *handle, const char *path);
+typedef uint64_t (*vr_get_driver_pose)(void *self, uint32_t device, uint8_t *out);
+
+//! The start of DriverPose_t: quaternions are w, x, y, z.
+typedef struct
+{
+	double pose_time_offset;
+	double world_from_driver_rotation[4];
+	double world_from_driver_translation[3];
+	double driver_from_head_rotation[4];
+	double driver_from_head_translation[3];
+} vr_driver_pose_start;
 
 static vr_get_string_property real_get_string_property;
 static vr_string_to_handle real_string_to_handle;
+static vr_get_driver_pose real_get_driver_pose;
+//! vrlink's IVRSystem, which the pose hook asks for a device's type.
+static void *g_system;
+
+/*
+ * Valve's offset from a PICO 4 controller's OpenXR grip pose to the pose it sends (its Android
+ * client's controller_config.json, /interaction_profiles/bytedance/pico4_controller): a position in
+ * the grip frame and a rotation of -10 degrees about x, as a quaternion (w, x, y, z).
+ */
+static const double g_valve_offset_position[3] = {-0.007, -0.0512, -0.09607};
+static const double g_valve_offset_rotation[4] = {0.9961946980917455, -0.08715574274765817, 0.0, 0.0};
+//! Where our driver finds PICO OS's calibration (PICO4_CALIBRATION_DIR overrides it, as there).
+#define CALIBRATION_DIR "/usr/share/qcom/pico4/calibration"
+
+//! A rigid transform: unit quaternion (w, x, y, z) and translation.
+typedef struct
+{
+	double q[4];
+	double t[3];
+} transform;
+
+static pthread_once_t g_offsets_once = PTHREAD_ONCE_INIT;
+//! Per hand (0 left, 1 right) aim to sent pose; valid only when g_have_offsets.
+static transform g_offsets[2];
+static bool g_have_offsets;
+
+static pthread_mutex_t g_hand_lock = PTHREAD_MUTEX_INITIALIZER;
+static char g_hand[VR_MAX_DEVICES];
+static double g_hand_checked[VR_MAX_DEVICES];
 
 //! Valve's Android client's static properties of the PICO 4's controllers (its controller_config.json).
 static const struct
@@ -169,6 +227,137 @@ hook_string_to_handle(void *self, uint64_t *handle, const char *path)
 	return real_string_to_handle(self, handle, path);
 }
 
+//! The quaternion product @p a * @p b (w, x, y, z) into @p out.
+static void
+quat_mul(const double a[4], const double b[4], double out[4])
+{
+	double r[4] = {
+	    a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+	    a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+	    a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+	    a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+	};
+	memcpy(out, r, sizeof(r));
+}
+
+//! @p v rotated by the unit quaternion @p q (w, x, y, z) into @p out.
+static void
+quat_rotate(const double q[4], const double v[3], double out[3])
+{
+	double p[4] = {0, v[0], v[1], v[2]}, conj[4] = {q[0], -q[1], -q[2], -q[3]}, t[4];
+	quat_mul(q, p, t);
+	quat_mul(t, conj, t);
+	memcpy(out, t + 1, 3 * sizeof(double));
+}
+
+//! The @p count numbers of the JSON array after key @p key from @p from on; false without them.
+static bool
+json_numbers(const char *from, const char *key, double *out, int count)
+{
+	const char *p = from == NULL ? NULL : strstr(from, key);
+	p = p == NULL ? NULL : strchr(p, '[');
+	for (int i = 0; p != NULL && i < count; i++) {
+		char *end;
+		out[i] = strtod(p + 1, &end);
+		if (end == p + 1) {
+			return false;
+		}
+		p = strpbrk(end, i + 1 < count ? "," : "]");
+	}
+	return p != NULL;
+}
+
+/*
+ * Each hand's aim-to-grip from calibration/controllers/aim-to-grip.json ({"left"|"right":
+ * {"position": [x, y, z], "orientation": [w, x, y, z]}}, grip = aim * transform), times Valve's offset.
+ */
+static void
+load_offsets(void)
+{
+	const char *dir = getenv("PICO4_CALIBRATION_DIR");
+	char path[512];
+	snprintf(path, sizeof(path), "%s/controllers/aim-to-grip.json", dir != NULL && *dir ? dir : CALIBRATION_DIR);
+	char text[8192] = "";
+	FILE *f = fopen(path, "r");
+	if (f != NULL) {
+		text[fread(text, 1, sizeof(text) - 1, f)] = '\0';
+		fclose(f);
+	}
+	static const char *const hands[] = {"\"left\"", "\"right\""};
+	for (int h = 0; h < 2; h++) {
+		double p[3], q[4];
+		const char *at = strstr(text, hands[h]);
+		if (!json_numbers(at, "\"position\"", p, 3) || !json_numbers(at, "\"orientation\"", q, 4)) {
+			fprintf(stderr, "pico4-vrlink-compat: no aim-to-grip in %s: controller poses stay aim poses\n", path);
+			return;
+		}
+		transform *t = &g_offsets[h];
+		quat_rotate(q, g_valve_offset_position, t->t);
+		for (int i = 0; i < 3; i++) {
+			t->t[i] += p[i];
+		}
+		quat_mul(q, g_valve_offset_rotation, t->q);
+	}
+	g_have_offsets = true;
+}
+
+static double
+now_s(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+//! 0 left, 1 right for one of our controllers, -1 otherwise; asked at most every HAND_CACHE_S.
+static int
+hand_index(uint32_t device)
+{
+	if (device >= VR_MAX_DEVICES || g_system == NULL || real_get_string_property == NULL) {
+		return -1;
+	}
+	pthread_mutex_lock(&g_hand_lock);
+	double now = now_s();
+	if (g_hand_checked[device] == 0 || now - g_hand_checked[device] > HAND_CACHE_S) {
+		g_hand[device] = our_hand(g_system, device);
+		g_hand_checked[device] = now;
+	}
+	char hand = g_hand[device];
+	pthread_mutex_unlock(&g_hand_lock);
+	return hand == 'l' ? 0 : hand == 'r' ? 1 : -1;
+}
+
+//! Compose the hand's offset onto the driver-from-head transform of @p device's driver pose @p pose.
+static void
+send_pose(uint32_t device, vr_driver_pose_start *pose)
+{
+	pthread_once(&g_offsets_once, load_offsets);
+	int hand = g_have_offsets ? hand_index(device) : -1;
+	if (hand < 0) {
+		return;
+	}
+	const transform *t = &g_offsets[hand];
+	double moved[3];
+	quat_rotate(pose->driver_from_head_rotation, t->t, moved);
+	for (int i = 0; i < 3; i++) {
+		pose->driver_from_head_translation[i] += moved[i];
+	}
+	quat_mul(pose->driver_from_head_rotation, t->q, pose->driver_from_head_rotation);
+}
+
+static uint64_t
+hook_get_driver_pose(void *self, uint32_t device, uint8_t *out)
+{
+	uint64_t result = real_get_driver_pose(self, device, out);
+	if (out != NULL) {
+		vr_driver_pose_start pose;
+		memcpy(&pose, out + VR_DRIVER_POSE_OFFSET, sizeof(pose));
+		send_pose(device, &pose);
+		memcpy(out + VR_DRIVER_POSE_OFFSET, &pose, sizeof(pose));
+	}
+	return result;
+}
+
 //! Replaces a slot of an interface's table in this process; returns what it held.
 static void *
 patch_slot(void *iface, size_t slot, void *hook)
@@ -205,6 +394,12 @@ VR_GetGenericInterface(const char *version, int32_t *error)
 		void *old = patch_slot(iface, VR_SLOT_GET_STRING_PROPERTY, (void *)hook_get_string_property);
 		if (old != NULL) {
 			real_get_string_property = (vr_get_string_property)old;
+		}
+		g_system = iface;
+	} else if (strcmp(version, "IVRClientInternal_XXX") == 0) {
+		void *old = patch_slot(iface, VR_SLOT_GET_DRIVER_POSE, (void *)hook_get_driver_pose);
+		if (old != NULL) {
+			real_get_driver_pose = (vr_get_driver_pose)old;
 		}
 	} else if (strcmp(version, "IVRPaths_002") == 0) {
 		void *old = patch_slot(iface, VR_SLOT_STRING_TO_HANDLE, (void *)hook_string_to_handle);

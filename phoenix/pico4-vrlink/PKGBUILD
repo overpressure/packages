@@ -1,7 +1,7 @@
 # Steam Link's client (SteamVR's vrlink) with the PICO 4's controllers.
 # vrlink is the Steam Frame's client and sends input only for the Frame's controllers: this library,
 # preloaded into vrlink by its launcher, has it pack ours as the Frame's and tell the PC they are
-# PICO 4 controllers, in the input layout the PC's driver reads for those.
+# PICO 4 controllers, in the input layout and at the pose the PC's driver reads for those.
 pkgname=pico4-vrlink
 pkgver=1
 pkgrel=3
@@ -10,8 +10,8 @@ url="https://github.com/ValveSoftware/openvr"
 license=(BSL-1.0)
 depends=(glibc)
 source=(pico4-vrlink-compat.c test_pico4_vrlink_compat.c)
-sha256sums=('c78dee08338f3c2b9ffd0eccc9a57d19780f5735e8b2533ffc7f62d2cb6c18fd'
-            'afb2297023084f408f9e0ddbf0dbb8b2551b9ac7c72c80aad3e2f7c37b6e5276')
+sha256sums=('eb7e4000ed51190b400d508a0967e52489acaf014507ed7290d209e9a998e10a'
+            '5b7feb2a4ce4be5d47ff943efb433747fb7f3e172937939a80206abdb94099b8')
 
 build() {
   ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Werror -fPIC -shared -fvisibility=hidden $LDFLAGS \
@@ -20,7 +20,7 @@ build() {
   # OpenVR, as vrlink loads it.
   ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fPIC -shared -DFAKE_OPENVR -o libfakeopenvr.so test_pico4_vrlink_compat.c
   ${CC:-cc} -std=c11 -Wall -Wextra -Werror -o test_pico4_vrlink_compat test_pico4_vrlink_compat.c \
-    -Wl,--no-as-needed -L. -lpico4-vrlink-compat -lfakeopenvr -Wl,-rpath,"$PWD"
+    -Wl,--no-as-needed -L. -lpico4-vrlink-compat -lfakeopenvr -lm -Wl,-rpath,"$PWD"
   ./test_pico4_vrlink_compat
 }
 

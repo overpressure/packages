@@ -6,9 +6,12 @@
  */
 #define _GNU_SOURCE
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 void *VR_GetGenericInterface(const char *version, int32_t *error);
 
@@ -17,8 +20,10 @@ void *VR_GetGenericInterface(const char *version, int32_t *error);
 //! Each table on a page of its own: the layer write-protects the page of the slot it replaces.
 static void *g_system_table[512] __attribute__((aligned(4096)));
 static void *g_paths_table[512] __attribute__((aligned(4096)));
+static void *g_client_table[512] __attribute__((aligned(4096)));
 static void *g_system = g_system_table;
 static void *g_paths = g_paths_table;
+static void *g_client = g_client_table;
 //! The path the last StringToHandle got.
 char g_last_path[256];
 
@@ -53,6 +58,23 @@ string_to_handle(void *self, uint64_t *handle, const char *path)
 	return 0;
 }
 
+/*
+ * IVRClientInternal's driver pose: an 8-byte header, then DriverPose_t, whose driver-from-head
+ * transform is a quarter turn about z and 0.1 m along x.
+ */
+static uint64_t
+get_driver_pose(void *self, uint32_t device, uint8_t *out)
+{
+	(void)self;
+	double pose[16] = {0};
+	pose[1] = 1;                // world-from-driver rotation w
+	pose[8] = 0.70710678118655; // driver-from-head rotation w
+	pose[11] = 0.70710678118655; // ... z
+	pose[12] = 0.1;             // driver-from-head translation x
+	memcpy(out + 8, pose, sizeof(pose));
+	return device;
+}
+
 void *
 VR_GetGenericInterface(const char *version, int32_t *error)
 {
@@ -60,9 +82,13 @@ VR_GetGenericInterface(const char *version, int32_t *error)
 	if (g_system_table[28] == NULL) { // once: the layer write-protects the tables' pages then
 		g_system_table[28] = (void *)get_string;
 		g_paths_table[2] = (void *)string_to_handle;
+		g_client_table[12] = (void *)get_driver_pose;
 	}
 	if (strcmp(version, "IVRSystem_026") == 0) {
 		return &g_system;
+	}
+	if (strcmp(version, "IVRClientInternal_XXX") == 0) {
+		return &g_client;
 	}
 	return strcmp(version, "IVRPaths_002") == 0 ? &g_paths : NULL;
 }
@@ -71,6 +97,7 @@ VR_GetGenericInterface(const char *version, int32_t *error)
 
 typedef uint32_t (*get_string_fn)(void *, uint32_t, int32_t, char *, uint32_t, int32_t *);
 typedef int32_t (*to_handle_fn)(void *, uint64_t *, const char *);
+typedef uint64_t (*get_pose_fn)(void *, uint32_t, uint8_t *);
 extern char g_last_path[256];
 static int g_failed;
 
@@ -104,6 +131,22 @@ path(void *paths, const char *frame)
 int
 main(void)
 {
+	// The calibration the layer reads, made up: grip 30 degrees about x from the aim, both hands.
+	char dir[] = "/tmp/pico4-vrlink-test-XXXXXX";
+	if (mkdtemp(dir) == NULL) {
+		perror("mkdtemp");
+		return 1;
+	}
+	char file[128];
+	snprintf(file, sizeof(file), "%s/controllers", dir);
+	mkdir(file, 0755);
+	snprintf(file, sizeof(file), "%s/controllers/aim-to-grip.json", dir);
+	FILE *f = fopen(file, "w");
+	static const char hand[] = "{\"position\": [0, 0.01, 0.05], \"orientation\": [0.96592583, 0.25881905, 0, 0]}";
+	fprintf(f, "{\"left\": %s, \"right\": %s}", hand, hand);
+	fclose(f);
+	setenv("PICO4_CALIBRATION_DIR", dir, 1);
+
 	int32_t error = 0;
 	void *system = VR_GetGenericInterface("IVRSystem_026", &error);
 	void *paths = VR_GetGenericInterface("IVRPaths_002", &error);
@@ -129,6 +172,28 @@ main(void)
 	expect("analog 2", path(paths, "/user/hand/left/input/trigger/value"), "/user/hand/left/input/joystick/y");
 	expect("right click 0", path(paths, "/user/hand/right/input/a/click"), "/user/hand/right/input/a/click");
 	expect("analog 3", path(paths, "/user/hand/left/input/grip/value"), "/user/hand/left/input/grip/value");
+
+	// Poses: a made-up aim-to-grip (0, 0.01, 0.05), 30 degrees about x, then Valve's offset, composed
+	// onto the driver-from-head transform of our controllers only.
+	void *client = VR_GetGenericInterface("IVRClientInternal_XXX", &error);
+	const double expected[2][7] = {
+	    {0.0863055, -0.007, -0.0587991, 0.6963642, 0.1227878, 0.1227878, 0.6963642}, // a controller
+	    {0.1, 0, 0, 0.70710678, 0, 0, 0.70710678},                                     // the headset
+	};
+	for (uint32_t device = 0; device < 3; device++) {
+		uint8_t out[8 + 16 * sizeof(double)];
+		(*(get_pose_fn **)client)[12](client, device, out);
+		double pose[16];
+		memcpy(pose, out + 8, sizeof(pose));
+		const double *want = expected[device == 0];
+		const double got[7] = {pose[12], pose[13], pose[14], pose[8], pose[9], pose[10], pose[11]};
+		for (int i = 0; i < 7; i++) {
+			if (fabs(got[i] - want[i]) > 1e-6) {
+				fprintf(stderr, "FAIL device %u driver-from-head [%d]: %.7f, not %.7f\n", device, i, got[i], want[i]);
+				g_failed = 1;
+			}
+		}
+	}
 	if (!g_failed) {
 		printf("pico4-vrlink-compat: ok\n");
 	}
