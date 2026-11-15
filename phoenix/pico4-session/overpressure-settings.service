@@ -1,0 +1,11 @@
+# Overpressure Settings in SteamVR's dashboard: the lens distance and the controllers' pairing
+# (docs/session.md#settings). It runs with SteamVR.
+[Unit]
+Description=Overpressure Settings in SteamVR's dashboard
+PartOf=steamvr.service
+After=steamvr.service
+
+[Service]
+ExecStart=/usr/bin/overpressure-settings
+Restart=on-failure
+RestartSec=5

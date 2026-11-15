@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""pico4-monado's first-run setup panel: every text it shows exists in every language it offers."""
+"""pico4-monado's setup and settings panels: every text they show exists in every language the setup offers."""
 
 from __future__ import annotations
 
@@ -35,7 +35,9 @@ class Texts(unittest.TestCase):
         self.languages = sections(STRINGS.read_text(encoding="utf-8"))
 
     def test_every_key_the_panel_uses_is_in_english_and_every_text_is_used(self) -> None:
-        source = (RECIPE / "pico4-onboarding.cpp").read_text(encoding="utf-8")
+        source = "".join(
+            (RECIPE / name).read_text(encoding="utf-8") for name in ("pico4-onboarding.cpp", "overpressure-settings.cpp")
+        )
         english = self.languages["english"]
         self.assertFalse(set(re.findall(r'our\("([a-z_]+)"\)', source)) - set(english), "keys without English text")
         # Each text is named in the source, also where a condition picks one of two.

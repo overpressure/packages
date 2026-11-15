@@ -14,8 +14,8 @@
 # (pico4-openxr-display) through the OpenXR loader; pico4-cam checks the
 # tracking cameras on their own; pico4-ctrack-replay runs the controller LED
 # tracker over pico4-cam's recordings; pico4-roomview hands the forward cameras to
-# SteamVR's room view; pico4-lens-panel and pico4-onboarding are SteamVR
-# overlays (the lens distance, the first run's introduction).
+# SteamVR's room view; overpressure-settings and pico4-onboarding are SteamVR
+# overlays (Overpressure Settings' dashboard tab, the first-run setup).
 pkgname=pico4-monado
 pkgver=25.1.0
 pkgrel=16
@@ -39,8 +39,8 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
         pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4-roomview.c
-        pico4_lens_panel.h pico4-lens-panel.cpp test_pico4_lens_panel.c
-        pico4_overlay.hpp pico4_onboarding.h pico4-onboarding.cpp test_pico4_onboarding.c
+        pico4_lens_panel.h test_pico4_lens_panel.c pico4_settings.h overpressure-settings.cpp test_pico4_settings.c
+        pico4_overlay.hpp pico4_panels.hpp pico4_pairing.h pico4_onboarding.h pico4-onboarding.cpp test_pico4_onboarding.c
         pico4_setup.h pico4_text.hpp test_pico4_setup.c pico4-onboarding.strings pico4-steamvr-switch.cpp
         pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
         pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
@@ -89,17 +89,21 @@ sha256sums=(SKIP
             '76ba6acb295abafd3235bf828bc3534543ea0c279a054d38c032b48dcab17f89'
             '54aa815f0d7e4a1370b94cf1e51c3ce84c38d6bdad66d7e2a41e56ed598efbd8'
             'e160944ec154fa5caf43d2177396656c8561d1739df07510ce75c3b8ddafa3b3'
-            'ad5d2e7080954c335d87e2a03439f35291945f392a6c6ad2a4e19dd3b213c748'
-            '1cb3fcda349cdd7c4c2a824af24fc893601f8cb435d63b7bde1ea4ff66709fdf'
-            '14a50ebd279e461f9081db12d10e18b3e74fda64c073e4074a813baad4a18303'
-            'feb1df44c13708e387fcd0dcd6684026e39598cf717b7ac375060f21c9a4e2d9'
-            '2ea5da94a80c42fb322c5d0624aedf911403292f7cc21cd980883fc4ae900135'
-            '9802ed64742047d8a2a0bccc0f4822d17fb66ba058e7b596197a0774bf1f26dd'
-            'cf979097f69fd4dbd40f9270a3e761a167f61202e8f9538e2316af016125e4e3'
+            '8a4eb266bc10fb356f687f42f7d7eb67cdf84fb19a8183942f68ee2e7924fe9b'
+            'af5f88cfdce7ca58d449de367170cfa6c4bfea1fc2c3a6527ddc620f36567b16'
+            'ef439cd62f980ac666d74b0eca4b83ea8355bc89d9f702507a097e1d53ee1393'
+            'fcbccae674540a0dd06026aaa5a8e77522b2bbbf848a13e70c1d6fb1f8523d4d'
+            '906a7fc52e55a666645aa5ee3a66100e353134049f59558870c7005dc6c084ac'
+            '5cbe37ce8152ace06a53c6f0bec5b9fb6b639d9d2b86c6eb47864594112f87ab'
+            '6b0d8e8479f4282bcaaaa46d0090417fa5e1ca72a03600a9b2da95cdf71f28d5'
+            '7aafc2f95d382c3445c98e546f32a52464183b2b9d0e05c77398c7d011aed823'
+            '9e9f196f447f64b3177349c95a9be86343da081569b11ba002fec342db41a2dd'
+            'e556bb87f1631d429c69eb99da9b85a2aa87fac873606769891d2c02b89341ea'
+            '7e22709542acad80b192fa0cd1ecd7e533e02a33aa233cbd5c17144331e36898'
             '0d6cde6ed2170a1297713abe8a2105e108730f68cf031ee84f13e2fc61756190'
             '4104d15d75e3dff32b8edf5779b9a73cacd85e5a36d6bd1a8c23f928889a3cc6'
             '12c0142cf618f09f26d5b7ae0fa23ca6913c46df244d01562d4470324f29397f'
-            '0d2c1e1afaa037fd71083b08376bbb28abaf422645797314823191f484182848'
+            'b6e41fc4689a3fa4cd287a88a62d922aef5c5f26467f6edbe180c24ebdd71786'
             'cc727edbad724f50656255313d81ebc56dc6c168bbe05f10f8c57cfecd3829a4'
             '1e216b8317b7dcbdefb623a59dedf67ab580ffcfcd5b671a5420e777ce88aea9'
             '15458e31c35d4b5ea13b8bfdc342c03a45da727787a1ca2c1f9bafa551c7674a'
@@ -202,6 +206,8 @@ build() {
   ./test_pico4_fusion
   ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_lens_panel test_pico4_lens_panel.c -lm
   ./test_pico4_lens_panel
+  ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_settings test_pico4_settings.c -lm
+  ./test_pico4_settings
   ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_onboarding test_pico4_onboarding.c
   ./test_pico4_onboarding
   ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_setup test_pico4_setup.c
@@ -246,7 +252,8 @@ build() {
     pico4_cam.c pico4_station.c pico4_ssc.c -lpthread
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-roomview pico4-roomview.c -lvulkan -ldl -lm
   ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -isystem monado/src/external/openvr_includes \
-    -o pico4-lens-panel pico4-lens-panel.cpp -lcairo -lvulkan -ldl -lm
+    $(pkg-config --cflags pangocairo fontconfig) -o overpressure-settings overpressure-settings.cpp \
+    $(pkg-config --libs pangocairo fontconfig) -lcairo -lvulkan -ldl -lm
   ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -isystem monado/src/external/openvr_includes \
     $(pkg-config --cflags pangocairo fontconfig) -o pico4-onboarding pico4-onboarding.cpp \
     $(pkg-config --libs pangocairo fontconfig) -lcairo -lvulkan -ldl -lm
@@ -276,7 +283,7 @@ package() {
   # remapping of other controllers' bindings is SteamVR's own file.
   install -Dm644 pico4-controller-profile.json "$input/pico4_controller_profile.json"
   ln -s /opt/steamvr/resources/input/default_pico_controller_remapping.json "$input/default_pico_controller_remapping.json"
-  install -Dm755 pico4-lens-panel pico4-onboarding pico4-steamvr-switch -t "$pkgdir/usr/bin"
+  install -Dm755 overpressure-settings pico4-onboarding pico4-steamvr-switch -t "$pkgdir/usr/bin"
   install -Dm644 pico4-onboarding.strings "$pkgdir/usr/share/pico4/onboarding.strings"
   install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam pico4-ctrack-replay pico4-roomview -t "$pkgdir/usr/bin"
   # The loader's system-wide active runtime.

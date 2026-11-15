@@ -1,8 +1,8 @@
 // Copyright 2026, overpressure contributors.
 // SPDX-License-Identifier: BSL-1.0
 /*
- * The lens panel's layout and presets (pico4-lens-panel.cpp), apart from SteamVR and drawing so
- * that the tests can reach them.
+ * Overpressure Settings' lens distance page: its layout and presets (overpressure-settings.cpp),
+ * apart from SteamVR and drawing so that the tests can reach them.
  */
 #pragma once
 

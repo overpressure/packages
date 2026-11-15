@@ -1,7 +1,7 @@
 // Copyright 2026, overpressure contributors.
 // SPDX-License-Identifier: BSL-1.0
 /*
- * What the project's SteamVR overlays share (pico4-lens-panel, pico4-onboarding): OpenVR opened at
+ * What the project's SteamVR overlays share (overpressure-settings, pico4-onboarding): OpenVR opened at
  * run time (nothing of Valve's is linked), cairo images handed to SteamVR as Vulkan textures, and
  * a few drawing helpers.
  *

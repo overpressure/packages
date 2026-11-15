@@ -1,7 +1,7 @@
-# The first run's introduction and hands-free controller pairing in the headset
-# (docs/session.md#onboarding). It runs with SteamVR.
+# The first-run setup in the headset (docs/session.md#first-run-setup). It runs with SteamVR and
+# exits at once once the setup is done.
 [Unit]
-Description=PICO 4 introduction and controller pairing in SteamVR
+Description=PICO 4 first-run setup in SteamVR
 PartOf=steamvr.service
 After=steamvr.service
 

@@ -1,6 +1,6 @@
 # Valve's VR session on the PICO 4: pico4-session starts the Frame's session for its user without a display
-# manager; Monado as a system service for driver_monado; SteamVR's settings, the room view, the lens panel,
-# the first run's introduction and setup, SteamVR's and Steam's drop-ins, the VR CPU limits, the kernel
+# manager; Monado as a system service for driver_monado; SteamVR's settings, the room view,
+# the first-run setup, Overpressure Settings, SteamVR's and Steam's drop-ins, the VR CPU limits, the kernel
 # threads' priorities, the Frame's polkit helpers and updater answered for this headset, and the session's
 # SteamVR files (/usr/share/pico4: settings, openvrpaths, the Frame controller's layout), which the image's
 # build puts into the user's home and SteamVR's remapping. The preset enables the session; the tests run in
@@ -31,7 +31,7 @@ source=(pico4-session
         pico4-session.service
         pico4-vr-performance.service
         gamescope-session.service.d-50-pico4.conf
-        pico4-lens-panel.service
+        overpressure-settings.service
         pico4-onboarding.service
         pico4-roomview.service
         pico4-steamvr-failed.service
@@ -39,7 +39,7 @@ source=(pico4-session
         55-pico4-first-run.conf
         steamvr.service.d-50-pico4.conf
         52-pico4-roomview.conf
-        53-pico4-lens-panel.conf
+        53-overpressure-settings.conf
         54-pico4-onboarding.conf
         pico4-steamos.conf
         kthread-priorities
@@ -76,16 +76,16 @@ sha256sums=('6dd8cda751033318aca350f3dbbed8a29860431777488b4acc042e8f1b9572b3'
             '96c341eddba0622f19b078a81a4febe960e45d3ea5e0eed86891221a9176a5ec'
             '602007dd743608f512f32c065ac862bb67ebf572a495943f2e28c878887b59ed'
             '26315b666d39b0b0bd45fa111125372b6a4f960d7d9e878e4c6d0e2344a5914b'
-            '1fb0a543a0b3225ae025d8f05ce706a82d1a28ea613afefa4b68324debd1b6e9'
-            '4d11980af4e5fe4ab70d9526b8a7f5e19aa6385d788fcd3dfb0e21d43b5f985c'
+            '583c4cda65039cda59b4a1c1f8a502dcccfaa439c610190c3ffc732d63bf9e75'
+            '6251d03b432537997d267edb1a63943e8d7dcee567bbe1efd17e131867b08afd'
             '08c94b2d813787262e686bd4b04113b536292bbda6a61332fded3227e03ae5f1'
             '6a27facb78cf11b3ada2d88efc340c1114b4747a76a93782ca41db50b3af848f'
             '552df4f4973a5f2f336b1705f9aa678e270c20b211a31bad0f56ab5fd28b40c7'
             '0a03ed543c526dd4fed3b3354e381895fdb262c1f1da023a27371d752246304b'
             '964f3cd570156b50409418e15e55ddd40837d4f2aa6577ad1c79c3eb571da35a'
             'a9ee51a475a8bd527571fa2e36d041ba524ae90f263f3bb7b41246599e50b7e6'
-            'b4921874e087cf9dc1be13ea29b1c4c14839be72d93caeda3a75732630e180d5'
-            'c41213e8ac3185d838d01b9addcdb24833094f1920f05c6acd90b4a5a15ba02f'
+            'e9d245af21038b0db990d91ea1fccb9f5d08f8d2b0387e9188d509136e651f8c'
+            '6bdba9c16de2f3306888f3981b41017ab6919deed2aef14938889d0a40580ee3'
             'c6b8afb5512eefc540c194e288a21214153a470cc7e4e7053526da0ee63ce744'
             'dc79f563ac46c680ff26a52d01a97ac3e1fb47c748ab52e52465316f9fb105de'
             '558048fb79304748a7fb83bf8c57dab7514e95dd746edf6e163b8fbae22e5722'
@@ -127,7 +127,7 @@ package() {
   install -Dm644 pico4-session.service "$pkgdir/usr/lib/systemd/system/pico4-session.service"
   install -Dm644 pico4-vr-performance.service "$pkgdir/usr/lib/systemd/system/pico4-vr-performance.service"
   install -Dm644 gamescope-session.service.d-50-pico4.conf "$pkgdir/usr/lib/systemd/user/gamescope-session.service.d/50-pico4.conf"
-  install -Dm644 pico4-lens-panel.service "$pkgdir/usr/lib/systemd/user/pico4-lens-panel.service"
+  install -Dm644 overpressure-settings.service "$pkgdir/usr/lib/systemd/user/overpressure-settings.service"
   install -Dm644 pico4-onboarding.service "$pkgdir/usr/lib/systemd/user/pico4-onboarding.service"
   install -Dm644 pico4-roomview.service "$pkgdir/usr/lib/systemd/user/pico4-roomview.service"
   install -Dm644 pico4-steamvr-failed.service "$pkgdir/usr/lib/systemd/user/pico4-steamvr-failed.service"
@@ -135,7 +135,7 @@ package() {
   install -Dm644 55-pico4-first-run.conf "$pkgdir/usr/lib/systemd/user/steam.service.d/55-pico4-first-run.conf"
   install -Dm644 steamvr.service.d-50-pico4.conf "$pkgdir/usr/lib/systemd/user/steamvr.service.d/50-pico4.conf"
   install -Dm644 52-pico4-roomview.conf "$pkgdir/usr/lib/systemd/user/steamvr.service.d/52-pico4-roomview.conf"
-  install -Dm644 53-pico4-lens-panel.conf "$pkgdir/usr/lib/systemd/user/steamvr.service.d/53-pico4-lens-panel.conf"
+  install -Dm644 53-overpressure-settings.conf "$pkgdir/usr/lib/systemd/user/steamvr.service.d/53-overpressure-settings.conf"
   install -Dm644 54-pico4-onboarding.conf "$pkgdir/usr/lib/systemd/user/steamvr.service.d/54-pico4-onboarding.conf"
   install -Dm644 pico4-steamos.conf "$pkgdir/usr/lib/sysusers.d/pico4-steamos.conf"
   install -Dm755 kthread-priorities "$pkgdir/usr/libexec/pico4/kthread-priorities"

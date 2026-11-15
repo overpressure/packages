@@ -1,49 +1,39 @@
 // Copyright 2026, overpressure contributors.
 // SPDX-License-Identifier: BSL-1.0
 /*
- * pico4-onboarding: the first run in the headset (docs/session.md#onboarding).
+ * pico4-onboarding: the first-run setup in the headset (docs/session.md#first-run-setup).
  *
  * Steam runs its own setup only on Valve's factory image; on an installed system with no saved
- * account it goes to the sign-in, and the Frame's guided tour does not run (device type 541). This
- * covers both for the PICO 4:
+ * account it goes to the sign-in. This is the PICO 4's, before the first sign-in, once: Steam's
+ * welcome, its language (the client restarts in it) and time zone (the system's), Wi-Fi, the
+ * controllers and the lens distance, in the chosen language: the client's own words where it has
+ * them, ours otherwise (pico4_setup.h, pico4-onboarding.strings). Finishing or skipping it leaves
+ * ~/.local/share/pico4/setup-done; after that it exits at once, and overpressure-settings has the
+ * lenses and the controllers.
  *
- * - The setup, before the first sign-in, once: Steam's welcome, its language (the client restarts
- *   in it) and time zone (the system's), Wi-Fi, the controllers and the lens distance, in the
- *   chosen language: the client's own words where it has them, ours otherwise (pico4_setup.h,
- *   pico4-onboarding.strings). Finishing or skipping it leaves ~/.local/share/pico4/setup-done.
- * - Controllers. With no controller connected 20 s after the start, the laser cannot reach
- *   anything: the panel comes up in front of the wearer and the station listens for one
- *   controller after the other, through the driver's pairing socket (pico4_station.h), while the
- *   panel says what to press. With one controller connected, its laser pairs the other.
- * - The introduction after the first sign-in, once: health and safety, the laser and the PICO
- *   button, the playspace. Skipping or finishing it leaves ~/.local/share/pico4/onboarding-done;
- *   the dashboard's Introduction tab shows it again.
+ * With no controller connected 20 s after the start, the laser cannot reach the panel: the station
+ * listens for one controller after the other, through the driver's pairing socket
+ * (pico4_station.h), while the panel says what to press. With one controller connected, its laser
+ * pairs the other.
  *
  *   pico4-onboarding [--render DIR [LANGUAGE]]
  *
  * --render draws every page into DIR as PNG files, without SteamVR, in LANGUAGE (Steam's name).
  */
 #include "pico4_onboarding.h"
-#include "pico4_overlay.hpp"
-#include "pico4_setup.h"
-#include "pico4_text.hpp"
+#include "pico4_pairing.h"
+#include "pico4_panels.hpp"
 
-#include <dirent.h>
-#include <errno.h>
 #include <fcntl.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/un.h>
 #include <sys/wait.h>
 
 #include <algorithm>
 #include <cstdlib>
-#include <fstream>
-#include <sstream>
 
 namespace {
 
 using namespace pico4_overlay;
+using namespace pico4_panels;
 
 volatile sig_atomic_t g_stop;
 
@@ -53,35 +43,6 @@ stop_requested(int)
 	g_stop = 1;
 }
 
-std::string
-home_path(const char *rest)
-{
-	const char *home = getenv("HOME");
-	return std::string(home != nullptr ? home : "/tmp") + rest;
-}
-
-std::string
-read_file(const std::string &path, size_t limit = 8u << 20)
-{
-	std::ifstream in(path, std::ios::binary);
-	std::string text;
-	if (in) {
-		std::stringstream s;
-		s << in.rdbuf();
-		text = s.str();
-	}
-	if (text.size() > limit) {
-		text.clear();
-	}
-	return text;
-}
-
-bool
-mark_exists(const char *name)
-{
-	return access(home_path((std::string("/.local/share/pico4/") + name).c_str()).c_str(), F_OK) == 0;
-}
-
 void
 set_mark(const char *name)
 {
@@ -89,12 +50,6 @@ set_mark(const char *name)
 	mkdir(home_path("/.local/share").c_str(), 0755);
 	mkdir(home_path("/.local/share/pico4").c_str(), 0755);
 	std::ofstream(home_path((std::string("/.local/share/pico4/") + name).c_str())) << "1\n";
-}
-
-std::string
-registry()
-{
-	return read_file(home_path("/.steam/registry.vdf"));
 }
 
 //! The system's time zone: /etc/localtime's target below zoneinfo, "" when it has none.
@@ -193,160 +148,9 @@ struct Job
 	}
 };
 
-//! One request to the driver's pairing socket, read without waiting.
-struct Request
-{
-	int fd = -1;
-	std::vector<std::string> answers;
-	bool done = false;
-
-	//! Connect and send; false when the driver has no socket (no session, or it is starting).
-	bool start(const std::string &text)
-	{
-		const char *runtime = getenv("XDG_RUNTIME_DIR");
-		sockaddr_un addr{};
-		addr.sun_family = AF_UNIX;
-		snprintf(addr.sun_path, sizeof(addr.sun_path), "%s/%s", runtime != nullptr ? runtime : "/run/user/1000",
-		         "pico4-station");
-		// Without waiting: a driver busy with another request leaves the connection in its backlog.
-		fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-		if (fd < 0 || connect(fd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) != 0 ||
-		    send(fd, text.data(), text.size(), MSG_NOSIGNAL) != (ssize_t)text.size()) {
-			finish();
-			return false;
-		}
-		done = false;
-		answers.clear();
-		return true;
-	}
-
-	//! Take what arrived; true when something did.
-	bool poll()
-	{
-		bool any = false;
-		char buf[256];
-		while (fd >= 0) {
-			ssize_t n = recv(fd, buf, sizeof(buf) - 1, MSG_DONTWAIT);
-			if (n > 0) {
-				buf[n] = '\0';
-				answers.emplace_back(buf);
-				any = true;
-			} else if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
-				finish();
-				done = true;
-				any = true;
-			} else {
-				break;
-			}
-		}
-		return any;
-	}
-
-	void finish()
-	{
-		if (fd >= 0) {
-			close(fd);
-		}
-		fd = -1;
-	}
-
-	bool active() const { return fd >= 0; }
-};
-
-//! The texts in the current language: ours from the strings file, the rest the Steam client's own.
-struct Texts
-{
-	std::string language = "english";
-	std::string ours;
-	std::string ui, shared, ui_en, shared_en; //!< the client's localization files
-	std::string module;                       //!< its language-screen texts, every language
-	std::string steam = home_path("/.local/share/Steam");
-	bool steam_found = false;
-
-	//! The client's language-screen module, found by its content (its file name is a build's).
-	void find_module()
-	{
-		DIR *d = opendir((steam + "/steamui").c_str());
-		if (d == nullptr) {
-			return;
-		}
-		while (dirent *e = readdir(d)) {
-			const std::string name = e->d_name;
-			if (name.size() < 4 || name.compare(name.size() - 3, 3, ".js") != 0) {
-				continue;
-			}
-			const std::string text = read_file(steam + "/steamui/" + name, 256u << 10);
-			if (text.find("Steam_Language_Selection_Label:") != std::string::npos) {
-				module = text;
-				break;
-			}
-		}
-		closedir(d);
-	}
-
-	void load(const std::string &lang)
-	{
-		language = pico4_setup_language_index(lang.c_str()) >= 0 ? lang : "english";
-		const char *path = getenv("PICO4_ONBOARDING_STRINGS");
-		ours = read_file(path != nullptr ? path : "/usr/share/pico4/onboarding.strings");
-		const std::string loc = steam + "/steamui/localization/";
-		ui = read_file(loc + "steamui_" + language + "-json.js");
-		shared = read_file(loc + "shared_" + language + "-json.js");
-		ui_en = read_file(loc + "steamui_english-json.js");
-		shared_en = read_file(loc + "shared_english-json.js");
-		if (module.empty()) {
-			find_module();
-		}
-		steam_found = !ui_en.empty();
-		pico4_text::add_steam_fonts(steam);
-	}
-
-	std::string our(const char *key) const
-	{
-		char out[1024];
-		if (pico4_setup_string(ours.c_str(), language.c_str(), key, out, sizeof(out)) ||
-		    pico4_setup_string(ours.c_str(), "english", key, out, sizeof(out))) {
-			return out;
-		}
-		return key;
-	}
-
-	//! The client's text @p token in the current language, else in English, else @p fallback.
-	std::string steam_text(const char *token, const char *fallback) const
-	{
-		char out[1024];
-		for (const std::string *file : {&ui, &shared, &ui_en, &shared_en}) {
-			if (pico4_setup_steam_token(file->c_str(), token, out, sizeof(out))) {
-				return out;
-			}
-		}
-		return fallback;
-	}
-
-	//! A language-screen text of @p lang (its welcome, its own name), else @p fallback.
-	std::string language_text(const char *lang, const char *key, const char *fallback) const
-	{
-		char out[512];
-		return pico4_setup_language_text(module.c_str(), lang, key, out, sizeof(out)) ? out : fallback;
-	}
-};
-
-//! @p pattern with its first %s or %1$s replaced by @p value.
-std::string
-fill(std::string pattern, const std::string &value)
-{
-	for (const char *mark : {"%1$s", "%s"}) {
-		const size_t at = pattern.find(mark);
-		if (at != std::string::npos) {
-			return pattern.replace(at, strlen(mark), value);
-		}
-	}
-	return pattern;
-}
-
 struct Setup
 {
-	bool active = false; //!< the setup's pages instead of the introduction
+	bool active = false; //!< the setup's pages are up (once the driver said where the controllers are)
 	enum pico4_setup_page page = PICO4_SETUP_WELCOME;
 	int list_page = 0;
 	int language = 0;
@@ -375,10 +179,7 @@ struct Setup
 
 struct State
 {
-	enum pico4_tour_page page = PICO4_TOUR_CONTROLLERS;
 	bool shown = false;     //!< The panel in front of the wearer.
-	bool in_tab = false;    //!< The pages run in the dashboard's tab (started from it).
-	bool tour = false;      //!< The pages past the controllers follow.
 	bool known = false;     //!< The driver answered a status.
 	bool left = false, right = false;
 	int pairing = 0;        //!< The hand being paired: 1 left, 2 right.
@@ -451,7 +252,7 @@ controllers(cairo_t *c, const State &s, const Texts &t, double y)
 	}
 	y += 6;
 	cairo_set_source_rgb(c, 0.85, 0.87, 0.90);
-	const int pair_hand = pico4_tour_pair_button(s.left, s.right);
+	const int pair_hand = pico4_pairing_missing(s.left, s.right);
 	if (s.pairing != 0) {
 		y = paragraph(c, t.our(s.pairing == 1 ? "controller_pair_left" : "controller_pair_right"), y, 28);
 		y = paragraph(c, t.our("controller_pair_how"), y, 28);
@@ -475,39 +276,6 @@ note(cairo_t *c, const std::string &text, bool error)
 		cairo_set_source_rgb(c, 0.60, 0.80, 0.95);
 	}
 	pico4_text::line(c, text, kTextX, 440, kTextW, 24, false);
-}
-
-void
-draw_tour(cairo_t *c, const State &s, const Texts &t)
-{
-	static const char *const titles[PICO4_TOUR_PAGES] = {"controllers_title", "safety_title", "controls_title",
-	                                                      "playspace_title", "done_title"};
-	static const char *const lines[PICO4_TOUR_PAGES][4] = {
-	    {nullptr},
-	    {"safety_space", "safety_light", "safety_sun", "safety_breaks"},
-	    {"controls_point", "controls_menu", "controls_recenter", nullptr},
-	    {"playspace_new", "playspace_later", nullptr, nullptr},
-	    {"done_again", nullptr, nullptr, nullptr},
-	};
-	title(c, t.our(titles[s.page]));
-	double y = 130;
-	if (s.page == PICO4_TOUR_CONTROLLERS) {
-		controllers(c, s, t, y);
-	} else {
-		cairo_set_source_rgb(c, 0.85, 0.87, 0.90);
-		for (int l = 0; l < 4 && lines[s.page][l] != nullptr; l++) {
-			y = paragraph(c, t.our(lines[s.page][l]), y, 30);
-		}
-	}
-	note(c, s.message, true);
-	const int pair_hand = pico4_tour_pair_button(s.left, s.right);
-	const bool last = s.page == PICO4_TOUR_DONE || (!s.tour && s.page == PICO4_TOUR_CONTROLLERS);
-	button(c, PICO4_TOUR_SKIP_X, t.our(s.tour ? "skip" : "close"), s.pressed == PICO4_TOUR_SKIP, false);
-	if (s.page == PICO4_TOUR_CONTROLLERS && pair_hand != 0 && s.pairing == 0) {
-		button(c, PICO4_TOUR_PAIR_X, t.our("pair"), s.pressed == PICO4_TOUR_PAIR, false);
-	}
-	button(c, PICO4_TOUR_NEXT_X, last ? t.steam_text("Button_Done", "Done") : t.steam_text("Button_Next", "Next"),
-	       s.pressed == PICO4_TOUR_NEXT, true);
 }
 
 //! The list's count of rows on @p page.
@@ -843,7 +611,7 @@ draw_setup(cairo_t *c, const State &s, const Texts &t, double now)
 	case PICO4_SETUP_CONTROLLERS:
 		title(c, t.our("controllers_title"));
 		controllers(c, s, t, 130);
-		if (pico4_tour_pair_button(s.left, s.right) != 0 && s.pairing == 0) {
+		if (pico4_pairing_missing(s.left, s.right) != 0 && s.pairing == 0) {
 			middle = t.our("pair");
 		}
 		break;
@@ -910,102 +678,9 @@ draw(cairo_surface_t *surface, const State &s, const Texts &t, double now = 0)
 {
 	cairo_t *c = cairo_create(surface);
 	background(c);
-	if (s.setup.active) {
-		draw_setup(c, s, t, now);
-	} else {
-		draw_tour(c, s, t);
-	}
+	draw_setup(c, s, t, now);
 	cairo_destroy(c);
 	cairo_surface_flush(surface);
-}
-
-void
-draw_start(cairo_surface_t *surface, const Texts &t, bool pressed)
-{
-	cairo_t *c = cairo_create(surface);
-	background(c);
-	cairo_set_source_rgb(c, 1, 1, 1);
-	pico4_text::draw(c, t.our("start_title"), kTextX, 100, kTextW, 48, true, pico4_text::kCenter);
-	cairo_set_source_rgb(c, 0.85, 0.87, 0.90);
-	pico4_text::draw(c, t.our("start_text"), kTextX, 200, kTextW, 28, false, pico4_text::kCenter);
-	button(c, PICO4_TOUR_NEXT_X - 330, t.our("start_show"), pressed, true);
-	cairo_destroy(c);
-	cairo_surface_flush(surface);
-}
-
-void
-draw_thumbnail(cairo_surface_t *surface)
-{
-	cairo_t *c = cairo_create(surface);
-	background(c);
-	cairo_set_source_rgb(c, 1, 1, 1);
-	pico4_text::draw(c, "?", 0, 40, 256, 150, true, pico4_text::kCenter);
-	cairo_destroy(c);
-	cairo_surface_flush(surface);
-}
-
-//! How far in front of the wearer the panel stands: before Steam's window, which follows the view.
-constexpr double kPanelDistance = 1.3;
-
-//! Where the panel stands: its centre, in the standing universe; valid once placed while tracked.
-struct Placement
-{
-	double x = 0, y = 0, z = 0;
-	bool valid = false;
-};
-
-//! The panel in front of the wearer, level, facing them, where they look now.
-void
-place_in_front(vr::IVROverlay *overlay, vr::IVRSystem *system, vr::VROverlayHandle_t handle, Placement &at)
-{
-	vr::TrackedDevicePose_t pose;
-	system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, &pose, 1);
-	if (!pose.bPoseIsValid) {
-		// Head-locked until the head is tracked.
-		vr::HmdMatrix34_t m = {{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, (float)-kPanelDistance}}};
-		overlay->SetOverlayTransformTrackedDeviceRelative(handle, vr::k_unTrackedDeviceIndex_Hmd, &m);
-		at.valid = false;
-		return;
-	}
-	const vr::HmdMatrix34_t &h = pose.mDeviceToAbsoluteTracking;
-	double fx = -h.m[0][2], fz = -h.m[2][2]; // the head's forward, level
-	const double n = std::sqrt(fx * fx + fz * fz);
-	if (n < 1e-3) {
-		fx = 0, fz = -1;
-	} else {
-		fx /= n, fz /= n;
-	}
-	// The panel's +z (its front) points back at the wearer: a turn about up by atan2(-fx, -fz).
-	const double yaw = std::atan2(-fx, -fz), cy = std::cos(yaw), sy = std::sin(yaw);
-	at = {h.m[0][3] + kPanelDistance * fx, h.m[1][3], h.m[2][3] + kPanelDistance * fz, true};
-	vr::HmdMatrix34_t m = {{{(float)cy, 0, (float)sy, (float)at.x}, {0, 1, 0, (float)at.y}, {(float)-sy, 0, (float)cy, (float)at.z}}};
-	overlay->SetOverlayTransformAbsolute(handle, vr::TrackingUniverseStanding, &m);
-}
-
-/*!
- * Whether the panel at @p at has left the wearer's view, as Steam's window would follow: more than
- * 30 degrees aside of where they look, or more than 0.3 m above or below their eyes. Then it is
- * placed in front again; while they look at it, it stays (the laser needs it still).
- */
-bool
-out_of_view(vr::IVRSystem *system, const Placement &at)
-{
-	vr::TrackedDevicePose_t pose;
-	system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, &pose, 1);
-	if (!pose.bPoseIsValid) {
-		return false;
-	}
-	if (!at.valid) {
-		return true; // placed head-locked before tracking: into the room now
-	}
-	const vr::HmdMatrix34_t &h = pose.mDeviceToAbsoluteTracking;
-	const double fx = -h.m[0][2], fz = -h.m[2][2], dx = at.x - h.m[0][3], dz = at.z - h.m[2][3];
-	const double nf = std::sqrt(fx * fx + fz * fz), nd = std::sqrt(dx * dx + dz * dz);
-	if (nf < 1e-3 || nd < 1e-3) {
-		return false;
-	}
-	const double cosine = (fx * dx + fz * dz) / (nf * nd);
-	return cosine < std::cos(30.0 * M_PI / 180.0) || std::fabs(at.y - h.m[1][3]) > 0.3;
 }
 
 int
@@ -1020,31 +695,16 @@ render(const char *dir, const char *language)
 		const std::string file = std::string(dir) + "/" + name + ".png";
 		r |= cairo_surface_write_to_png(surface, file.c_str()) != CAIRO_STATUS_SUCCESS;
 	};
+	// The controllers' page as each pairing leaves it: none (listening hands-free), one, both.
 	State s;
 	s.known = true;
-	s.tour = true;
-	const struct
-	{
-		const char *name;
-		enum pico4_tour_page page;
-		bool left, right;
-		int pairing;
-	} pages[] = {
-	    {"controllers-none", PICO4_TOUR_CONTROLLERS, false, false, 1},
-	    {"controllers-one", PICO4_TOUR_CONTROLLERS, true, false, 0},
-	    {"controllers-both", PICO4_TOUR_CONTROLLERS, true, true, 0},
-	    {"safety", PICO4_TOUR_SAFETY, true, true, 0},
-	    {"controls", PICO4_TOUR_CONTROLS, true, true, 0},
-	    {"playspace", PICO4_TOUR_PLAYSPACE, true, true, 0},
-	    {"done", PICO4_TOUR_DONE, true, true, 0},
-	};
-	for (const auto &p : pages) {
-		s.page = p.page;
-		s.left = p.left;
-		s.right = p.right;
-		s.pairing = p.pairing;
-		save(s, p.name);
-	}
+	s.setup.active = true;
+	s.setup.page = PICO4_SETUP_CONTROLLERS;
+	s.pairing = 1;
+	save(s, "setup-controllers-none");
+	s.pairing = 0;
+	s.left = s.right = true;
+	save(s, "setup-controllers-both");
 	// The setup's pages, with made-up networks and a lens distance.
 	State u;
 	u.known = true;
@@ -1118,8 +778,6 @@ render(const char *dir, const char *language)
 	w.wifi = PICO4_WIFI_LIST;
 	w.wifi_on = false;
 	save(u, "setup-wifi-off");
-	draw_start(surface, t, false);
-	r |= cairo_surface_write_to_png(surface, (std::string(dir) + "/start.png").c_str()) != CAIRO_STATUS_SUCCESS;
 	cairo_surface_destroy(surface);
 	return r;
 }
@@ -1203,12 +861,14 @@ main(int argc, char **argv)
 	signal(SIGTERM, stop_requested);
 	signal(SIGINT, stop_requested);
 
-	// The setup runs as SteamVR's scene application, the introduction as a background one.
+	// The setup runs once, before the first sign-in, as SteamVR's scene application.
 	const std::string start_registry = registry();
-	const bool scene = pico4_setup_starts(pico4_tour_oobe_done(start_registry.c_str()), mark_exists("setup-done"));
+	if (!pico4_setup_starts(pico4_pairing_oobe_done(start_registry.c_str()), mark_exists("setup-done"))) {
+		printf("pico4-onboarding: the setup is done\n");
+		return 0;
+	}
 	Vr vrs;
-	const int opened =
-	    vr_open("pico4-onboarding", vrs, &g_stop, scene ? vr::VRApplication_Scene : vr::VRApplication_Background);
+	const int opened = vr_open("pico4-onboarding", vrs, &g_stop, vr::VRApplication_Scene);
 	if (opened != 0) {
 		return opened == 2 ? 0 : 1;
 	}
@@ -1221,116 +881,78 @@ main(int argc, char **argv)
 		const std::string vdf = registry();
 		texts.load(pico4_setup_registry_language(vdf.c_str(), lang, sizeof(lang)) ? lang : "english");
 	}
-	vr::VROverlayHandle_t front, tab, thumbnail;
-	if (overlay->CreateOverlay("pico4.onboarding", "PICO 4 introduction", &front) != vr::VROverlayError_None ||
-	    overlay->CreateDashboardOverlay("pico4.onboarding.tab", texts.our("start_title").c_str(), &tab, &thumbnail) !=
-	        vr::VROverlayError_None) {
-		fprintf(stderr, "pico4-onboarding: no overlays\n");
+	vr::VROverlayHandle_t front;
+	if (overlay->CreateOverlay("pico4.onboarding", "PICO 4 setup", &front) != vr::VROverlayError_None) {
+		fprintf(stderr, "pico4-onboarding: no overlay\n");
 		return 1;
 	}
 	vr::HmdVector2_t scale = {{(float)PICO4_TOUR_W, (float)PICO4_TOUR_H}};
-	for (vr::VROverlayHandle_t h : {front, tab}) {
-		overlay->SetOverlayInputMethod(h, vr::VROverlayInputMethod_Mouse);
-		overlay->SetOverlayMouseScale(h, &scale);
-	}
+	overlay->SetOverlayInputMethod(front, vr::VROverlayInputMethod_Mouse);
+	overlay->SetOverlayMouseScale(front, &scale);
 	overlay->SetOverlayWidthInMeters(front, 1.2f);
-	overlay->SetOverlayWidthInMeters(tab, 2.0f);
 	// The laser reaches the panel outside the dashboard too, and it is drawn over Steam's window.
 	overlay->SetOverlayFlag(front, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, true);
 	overlay->SetOverlaySortOrder(front, 100);
 
 	cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, PICO4_TOUR_W, PICO4_TOUR_H);
 	Gpu gpu;
-	Texture front_texture, tab_texture, thumbnail_texture;
-	if (!gpu_create(gpu, vrs.compositor, "pico4-onboarding") || !texture_create(gpu, front_texture, PICO4_TOUR_W, PICO4_TOUR_H) ||
-	    !texture_create(gpu, tab_texture, PICO4_TOUR_W, PICO4_TOUR_H) || !texture_create(gpu, thumbnail_texture, 256, 256)) {
+	Texture front_texture;
+	if (!gpu_create(gpu, vrs.compositor, "pico4-onboarding") || !texture_create(gpu, front_texture, PICO4_TOUR_W, PICO4_TOUR_H)) {
 		fprintf(stderr, "pico4-onboarding: no Vulkan textures\n");
 		return 1;
 	}
-	{
-		cairo_surface_t *small = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 256, 256);
-		draw_thumbnail(small);
-		texture_show(gpu, thumbnail_texture, small, overlay, thumbnail);
-		cairo_surface_destroy(small);
-		draw_start(surface, texts, false);
-		texture_show(gpu, tab_texture, surface, overlay, tab);
-	}
 	Scene room;
-	if (scene) {
-		vrs.compositor->SetTrackingSpace(vr::TrackingUniverseStanding);
-		if (!room.create(gpu)) {
-			fprintf(stderr, "pico4-onboarding: no image for the scene\n");
-		}
+	vrs.compositor->SetTrackingSpace(vr::TrackingUniverseStanding);
+	if (!room.create(gpu)) {
+		fprintf(stderr, "pico4-onboarding: no image for the scene\n");
 	}
-	printf("pico4-onboarding: ready (%s)\n", scene ? "the setup, as SteamVR's scene" : "background");
-	fflush(stdout);
+	printf("pico4-onboarding: ready (the setup, as SteamVR's scene)\n");
 	fflush(stdout);
 
 	State s;
 	Setup &u = s.setup;
-	Placement placement;
-	double away_since = 0; //!< when the panel left the view, 0 while in it
+	Front placement;
 	Request status, pair;
 	const double started = now_s();
 	double next_status = 0, next_oobe = 0, next_texts = 0, next_view_check = 0, next_frame_draw = 0;
 	double systemui_since = 0; //!< when SteamVR's system UI was first seen, 0 before
 	double keyboard_warm_at = 0, keyboard_hide_at = 0; //!< the keyboard's first showing, 0 when done
 	bool view_pending = false; //!< the setup runs; its room view and closed dashboard still to come
-	bool oobe = false, mark = mark_exists("onboarding-done"), setup_mark = mark_exists("setup-done");
-	bool dirty = true, running = true, tab_pressed = false, again = false;
+	bool oobe = false;
+	bool dirty = true, running = true;
 	// The client's texts follow its first start (it unpacks itself), and the language a page set.
 	std::string texts_language = texts.language;
 	bool texts_steam = texts.steam_found;
 
-	auto show = [&](bool tour) {
-		s.tour = tour;
-		s.page = PICO4_TOUR_CONTROLLERS;
+	auto show = [&]() {
 		s.message.clear();
 		if (!s.shown) {
-			place_in_front(overlay, system, front, placement);
-			away_since = 0;
+			placement.place(overlay, system, front);
 			overlay->ShowOverlay(front);
 			s.shown = true;
-			printf("pico4-onboarding: shown (%s)\n", tour ? "introduction" : "controllers or setup");
+			printf("pico4-onboarding: shown (controllers or setup)\n");
 			fflush(stdout);
 		}
 		dirty = true;
 	};
-	auto hide = [&](bool finished) {
-		printf("pico4-onboarding: %s %s\n", finished ? "finished" : "closed", u.active ? "setup" : "introduction");
+	//! The setup over: SteamVR as it was, then the client (the mark lets it start), and this ends.
+	auto finish = [&]() {
+		printf("pico4-onboarding: finished setup\n");
 		fflush(stdout);
-		if (u.active) {
-			if (finished) {
-				// SteamVR as it was, then the client: the mark lets it start.
-				if (!view_pending) {
-					steamvr_switch("roomview", false);
-				}
-				view_pending = false;
-				steamvr_switch("expect-steam", true);
-				set_mark("setup-done");
-				// The introduction comes from a background application: a new start of this one.
-				again = scene;
-				running = !scene;
-				setup_mark = true;
-			}
-			u.active = false;
-		} else if (finished && s.tour) {
-			set_mark("onboarding-done");
-			mark = true;
+		if (!view_pending) {
+			steamvr_switch("roomview", false);
 		}
-		if (s.in_tab) {
-			s.in_tab = false;
-			draw_start(surface, texts, false);
-			texture_show(gpu, tab_texture, surface, overlay, tab);
-		} else {
-			overlay->HideOverlay(front);
-			s.shown = false;
-		}
-		s.tour = false;
+		view_pending = false;
+		steamvr_switch("expect-steam", true);
+		set_mark("setup-done");
+		u.active = false;
+		overlay->HideOverlay(front);
+		s.shown = false;
+		running = false;
 	};
 	auto start_pairing = [&](int hand) {
 		char text[32];
-		snprintf(text, sizeof(text), "pair %s %d", hand == 1 ? "left" : "right", PICO4_TOUR_PAIR_S);
+		snprintf(text, sizeof(text), "pair %s %d", hand == 1 ? "left" : "right", PICO4_PAIRING_LISTEN_S);
 		if (pair.start(text)) {
 			s.pairing = hand;
 			s.message.clear();
@@ -1365,7 +987,7 @@ main(int argc, char **argv)
 		const std::string label = password ? texts.steam_text("Settings_Internet_Enter_Password", "Password")
 		                                   : texts.steam_text("Settings_Internet_Enter_NetworkName", "Network Name");
 		const vr::EVROverlayError e = overlay->ShowKeyboardForOverlay(
-		    s.in_tab ? tab : front, password ? vr::k_EGamepadTextInputModePassword : vr::k_EGamepadTextInputModeNormal,
+		    front, password ? vr::k_EGamepadTextInputModePassword : vr::k_EGamepadTextInputModeNormal,
 		    vr::k_EGamepadTextInputLineModeSingleLine, vr::KeyboardFlag_Minimal | vr::KeyboardFlag_Modal, label.c_str(),
 		    PICO4_SETUP_TEXT - 1, "", 0);
 		u.keyboard = e == vr::VROverlayError_None;
@@ -1491,14 +1113,14 @@ main(int argc, char **argv)
 		}
 		if (button == PICO4_TOUR_SKIP) {
 			if (u.page == PICO4_SETUP_WELCOME) {
-				hide(true);
+				finish();
 			} else {
 				enter(pico4_setup_back(u.page));
 			}
 		} else if (button == PICO4_TOUR_NEXT) {
 			const enum pico4_setup_page next = pico4_setup_next(u.page);
 			if (next == PICO4_SETUP_PAGES) {
-				hide(true);
+				finish();
 			} else {
 				enter(next);
 			}
@@ -1509,7 +1131,7 @@ main(int argc, char **argv)
 				scan(true);
 			} else if (u.page == PICO4_SETUP_CONTROLLERS) {
 				s.hands_free = false;
-				start_pairing(pico4_tour_pair_button(s.left, s.right));
+				start_pairing(pico4_pairing_missing(s.left, s.right));
 			}
 		}
 		dirty = true;
@@ -1526,7 +1148,6 @@ main(int argc, char **argv)
 				u.language_job.start({"/usr/libexec/pico4/steam-language", lang});
 				texts.load(lang);
 				texts_language = texts.language;
-				overlay->SetOverlayName(tab, texts.our("start_title").c_str());
 				u.message = texts.our("setup_language_note");
 			}
 		} else if (u.page == PICO4_SETUP_TIMEZONE && !u.zone_job.running()) {
@@ -1568,122 +1189,79 @@ main(int argc, char **argv)
 	while (running && !g_stop) {
 		const double now = now_s();
 		vr::VREvent_t e;
-		for (vr::VROverlayHandle_t h : {front, tab}) {
-			while (overlay->PollNextOverlayEvent(h, &e, sizeof(e))) {
-				const bool typing = u.active && (u.wifi == PICO4_WIFI_NAME || u.wifi == PICO4_WIFI_PASSWORD);
-				if (e.eventType == vr::VREvent_KeyboardCharInput) {
-					char input[sizeof(e.data.keyboard.cNewInput) + 1] = {0};
-					memcpy(input, e.data.keyboard.cNewInput, sizeof(e.data.keyboard.cNewInput));
-					if (typing && pico4_setup_text_input(u.entry, sizeof(u.entry), input)) {
-						submit_entry();
-					}
-					u.typed++;
-					memset(input, 0, sizeof(input));
-					memset(e.data.keyboard.cNewInput, 0, sizeof(e.data.keyboard.cNewInput));
-					dirty = true;
-					continue;
+		while (overlay->PollNextOverlayEvent(front, &e, sizeof(e))) {
+			const bool typing = u.active && (u.wifi == PICO4_WIFI_NAME || u.wifi == PICO4_WIFI_PASSWORD);
+			if (e.eventType == vr::VREvent_KeyboardCharInput) {
+				char input[sizeof(e.data.keyboard.cNewInput) + 1] = {0};
+				memcpy(input, e.data.keyboard.cNewInput, sizeof(e.data.keyboard.cNewInput));
+				if (typing && pico4_setup_text_input(u.entry, sizeof(u.entry), input)) {
+					submit_entry();
 				}
-				if (e.eventType == vr::VREvent_KeyboardDone) {
-					if (typing && entry_ok(u)) {
-						submit_entry();
-					} else {
-						keyboard(false);
-					}
-					dirty = true;
-					continue;
+				u.typed++;
+				memset(input, 0, sizeof(input));
+				memset(e.data.keyboard.cNewInput, 0, sizeof(e.data.keyboard.cNewInput));
+				dirty = true;
+				continue;
+			}
+			if (e.eventType == vr::VREvent_KeyboardDone) {
+				if (typing && entry_ok(u)) {
+					submit_entry();
+				} else {
+					keyboard(false);
 				}
-				if (e.eventType == vr::VREvent_KeyboardClosed) {
-					if (u.keyboard) {
-						printf("pico4-onboarding: keyboard closed, %d characters typed\n", u.typed);
-						fflush(stdout);
-					}
-					u.keyboard = false;
-					dirty = true;
-					continue;
+				dirty = true;
+				continue;
+			}
+			if (e.eventType == vr::VREvent_KeyboardClosed) {
+				if (u.keyboard) {
+					printf("pico4-onboarding: keyboard closed, %d characters typed\n", u.typed);
+					fflush(stdout);
 				}
-				const double x = e.data.mouse.x, y = PICO4_TOUR_H - e.data.mouse.y; // SteamVR's y points up
-				const bool middle_shown =
-				    u.active ? (u.page == PICO4_SETUP_WIFI && u.wifi == PICO4_WIFI_LIST) ||
-				                   (u.page == PICO4_SETUP_CONTROLLERS && s.pairing == 0 && pico4_tour_pair_button(s.left, s.right) != 0)
-				             : s.page == PICO4_TOUR_CONTROLLERS && s.pairing == 0 && pico4_tour_pair_button(s.left, s.right) != 0;
-				// The tab's own start page; once started there, the pages run in the tab (OpenVR has no
-				// call that closes the dashboard, which would cover the panel in front).
-				if (h == tab && !s.in_tab) {
-					const bool on = x >= PICO4_TOUR_NEXT_X - 330 && x < PICO4_TOUR_NEXT_X - 330 + PICO4_TOUR_BUTTON_W &&
-					                y >= PICO4_TOUR_BUTTON_Y && y < PICO4_TOUR_BUTTON_Y + PICO4_TOUR_BUTTON_H;
-					if (e.eventType == vr::VREvent_MouseButtonDown && on) {
-						tab_pressed = true;
-					} else if (e.eventType == vr::VREvent_MouseButtonUp && tab_pressed) {
-						tab_pressed = false;
-						if (on && !s.shown) {
-							s.in_tab = true;
-							s.tour = true;
-							s.page = PICO4_TOUR_CONTROLLERS;
-							s.message.clear();
-							dirty = true;
-						}
-					}
-					continue;
+				u.keyboard = false;
+				dirty = true;
+				continue;
+			}
+			if (!u.active) {
+				continue;
+			}
+			const double x = e.data.mouse.x, y = PICO4_TOUR_H - e.data.mouse.y; // SteamVR's y points up
+			const bool middle_shown =
+			    (u.page == PICO4_SETUP_WIFI && u.wifi == PICO4_WIFI_LIST) ||
+			    (u.page == PICO4_SETUP_CONTROLLERS && s.pairing == 0 && pico4_pairing_missing(s.left, s.right) != 0);
+			const bool lists = list_count(u) > 0;
+			if (e.eventType == vr::VREvent_MouseButtonDown) {
+				s.pressed = pico4_tour_hit(x, y, middle_shown);
+				u.pressed_row = lists ? pico4_setup_hit_row(x, y) : -1;
+				u.pressed_arrow = lists ? pico4_setup_hit_arrow(x, y) : 0;
+				u.pressed_ipd = u.page == PICO4_SETUP_IPD ? pico4_setup_hit_ipd(x, y) : 0;
+				u.pressed_field = typing ? pico4_setup_hit_field(x, y) : 0;
+				if (u.pressed_field == 2 && u.wifi != PICO4_WIFI_PASSWORD) {
+					u.pressed_field = 0; // a name has no switch to show it
 				}
-				if ((h == tab) != s.in_tab) {
-					continue;
-				}
-				const bool lists = u.active && list_count(u) > 0;
-				if (e.eventType == vr::VREvent_MouseButtonDown) {
-					s.pressed = pico4_tour_hit(x, y, middle_shown);
-					if (u.active) {
-						u.pressed_row = lists ? pico4_setup_hit_row(x, y) : -1;
-						u.pressed_arrow = lists ? pico4_setup_hit_arrow(x, y) : 0;
-						u.pressed_ipd = u.page == PICO4_SETUP_IPD ? pico4_setup_hit_ipd(x, y) : 0;
-						u.pressed_field = typing ? pico4_setup_hit_field(x, y) : 0;
-						if (u.pressed_field == 2 && u.wifi != PICO4_WIFI_PASSWORD) {
-							u.pressed_field = 0; // a name has no switch to show it
-						}
+				dirty = true;
+			} else if (e.eventType == vr::VREvent_MouseButtonUp) {
+				const int was = s.pressed, was_row = u.pressed_row, was_arrow = u.pressed_arrow, was_ipd = u.pressed_ipd;
+				const int was_field = u.pressed_field;
+				s.pressed = PICO4_TOUR_NONE;
+				u.pressed_row = -1;
+				u.pressed_arrow = 0;
+				u.pressed_ipd = 0;
+				u.pressed_field = 0;
+				dirty = true;
+				if (was_field != 0 && typing && was_field == pico4_setup_hit_field(x, y)) {
+					if (was_field == 1 && !u.keyboard) {
+						keyboard(true);
+					} else if (was_field == 2) {
+						u.reveal = !u.reveal;
 					}
-					dirty = true;
-				} else if (e.eventType == vr::VREvent_MouseButtonUp) {
-					const int was = s.pressed, was_row = u.pressed_row, was_arrow = u.pressed_arrow, was_ipd = u.pressed_ipd;
-					const int was_field = u.pressed_field;
-					s.pressed = PICO4_TOUR_NONE;
-					u.pressed_row = -1;
-					u.pressed_arrow = 0;
-					u.pressed_ipd = 0;
-					u.pressed_field = 0;
-					dirty = true;
-					if (u.active) {
-						if (was_field != 0 && typing && was_field == pico4_setup_hit_field(x, y)) {
-							if (was_field == 1 && !u.keyboard) {
-								keyboard(true);
-							} else if (was_field == 2) {
-								u.reveal = !u.reveal;
-							}
-						} else if (was != PICO4_TOUR_NONE && was == pico4_tour_hit(x, y, middle_shown)) {
-							press_setup(was);
-						} else if (was_row >= 0 && lists && was_row == pico4_setup_hit_row(x, y)) {
-							choose_row(was_row);
-						} else if (was_arrow != 0 && lists && was_arrow == pico4_setup_hit_arrow(x, y)) {
-							u.list_page = pico4_setup_list_turn(u.list_page, was_arrow, list_count(u));
-						} else if (was_ipd != 0 && was_ipd == pico4_setup_hit_ipd(x, y)) {
-							lens(was_ipd);
-						}
-						continue;
-					}
-					if (was != pico4_tour_hit(x, y, middle_shown)) {
-						continue;
-					}
-					if (was == PICO4_TOUR_SKIP) {
-						hide(true);
-					} else if (was == PICO4_TOUR_PAIR) {
-						s.hands_free = false;
-						start_pairing(pico4_tour_pair_button(s.left, s.right));
-					} else if (was == PICO4_TOUR_NEXT) {
-						const enum pico4_tour_page next = pico4_tour_next(s.page);
-						if (!s.tour || next == PICO4_TOUR_PAGES) {
-							hide(true);
-						} else {
-							s.page = next;
-						}
-					}
+				} else if (was != PICO4_TOUR_NONE && was == pico4_tour_hit(x, y, middle_shown)) {
+					press_setup(was);
+				} else if (was_row >= 0 && lists && was_row == pico4_setup_hit_row(x, y)) {
+					choose_row(was_row);
+				} else if (was_arrow != 0 && lists && was_arrow == pico4_setup_hit_arrow(x, y)) {
+					u.list_page = pico4_setup_list_turn(u.list_page, was_arrow, list_count(u));
+				} else if (was_ipd != 0 && was_ipd == pico4_setup_hit_ipd(x, y)) {
+					lens(was_ipd);
 				}
 			}
 		}
@@ -1694,7 +1272,7 @@ main(int argc, char **argv)
 			} else if (e.eventType == vr::VREvent_TrackedDeviceUserInteractionStarted &&
 			           e.trackedDeviceIndex == vr::k_unTrackedDeviceIndex_Hmd && s.shown) {
 				// Put on (the wear sensor): the panel came up wherever the headset lay; in front again.
-				place_in_front(overlay, system, front, placement);
+				placement.place(overlay, system, front);
 				printf("pico4-onboarding: put on, the panel in front\n");
 				fflush(stdout);
 			}
@@ -1783,7 +1361,7 @@ main(int argc, char **argv)
 		}
 		if (status.poll() && status.done) {
 			bool left, right;
-			if (!status.answers.empty() && pico4_tour_parse_status(status.answers[0].c_str(), &left, &right)) {
+			if (!status.answers.empty() && pico4_pairing_parse_status(status.answers[0].c_str(), &left, &right)) {
 				dirty = dirty || !s.known || left != s.left || right != s.right;
 				s.known = true;
 				s.left = left;
@@ -1792,7 +1370,7 @@ main(int argc, char **argv)
 			status.answers.clear();
 		}
 		if (pair.poll() && pair.done) {
-			const int result = pair.answers.empty() ? -1 : pico4_tour_pair_answer(pair.answers.back().c_str());
+			const int result = pair.answers.empty() ? -1 : pico4_pairing_answer(pair.answers.back().c_str());
 			if (result != 1 && !s.hands_free) {
 				s.message = texts.our("controller_pair_failed");
 			}
@@ -1801,18 +1379,15 @@ main(int argc, char **argv)
 			dirty = true;
 		}
 		// Hands-free pairing: nothing points at the panel while no controller is there.
-		if (s.known && !s.left && !s.right && s.pairing == 0 && !s.in_tab && now - started >= PICO4_TOUR_CONTROLLER_WAIT_S) {
-			if (!s.shown) {
-				show(s.tour);
-			}
+		if (u.active && s.known && !s.left && !s.right && s.pairing == 0 && now - started >= PICO4_PAIRING_WAIT_S) {
 			s.hands_free = true;
-			s.last_hands_free = pico4_tour_hands_free(false, false, s.last_hands_free);
+			s.last_hands_free = pico4_pairing_hands_free(false, false, s.last_hands_free);
 			start_pairing(s.last_hands_free);
 		}
 		if (now >= next_oobe) {
 			next_oobe = now + 5;
 			const std::string vdf = registry();
-			oobe = pico4_tour_oobe_done(vdf.c_str());
+			oobe = pico4_pairing_oobe_done(vdf.c_str());
 		}
 		if (now >= next_texts && !texts_steam) {
 			// The client's files arrive with its first start.
@@ -1821,11 +1396,12 @@ main(int argc, char **argv)
 			texts_steam = texts.steam_found;
 			dirty = dirty || texts_steam;
 		}
-		// The setup, before the first sign-in: as soon as the driver says where the controllers are.
-		if (scene && s.known && !s.in_tab && !u.active && pico4_setup_starts(oobe, setup_mark)) {
-			if (!s.shown) {
-				show(false);
-			}
+		// The setup: as soon as the driver says where the controllers are, unless signed in meanwhile.
+		if (!u.active && oobe) {
+			running = false;
+		}
+		if (s.known && !u.active && running) {
+			show();
 			u.active = true;
 			u.language = std::max(0, pico4_setup_language_index(texts.language.c_str()));
 			enter(PICO4_SETUP_WELCOME);
@@ -1871,53 +1447,30 @@ main(int argc, char **argv)
 			}
 		}
 		if (u.active && oobe) {
-			// Signed in meanwhile (from Steam's window): the setup is over, the introduction follows.
-			hide(true);
-		}
-		if (s.known && (s.left || s.right) && !s.in_tab && !u.active && pico4_tour_starts(oobe, mark)) {
-			if (!s.shown) {
-				show(true);
-			} else if (!s.tour) {
-				s.tour = true; // the controllers came hands-free: the tour goes on from here
-				dirty = true;
-			}
+			// Signed in meanwhile (from Steam's window): the setup is over.
+			finish();
 		}
 		// The panel follows the view as Steam's window does, a second after it left it.
-		if (s.shown && out_of_view(system, placement)) {
-			if (away_since == 0) {
-				away_since = now;
-			} else if (now - away_since >= 1.0) {
-				place_in_front(overlay, system, front, placement);
-				away_since = 0;
-			}
-		} else {
-			away_since = 0;
+		if (s.shown) {
+			placement.follow(overlay, system, front, now);
 		}
-		if (dirty && (s.shown || s.in_tab)) {
+		if (dirty && s.shown) {
 			draw(surface, s, texts, now);
-			if (!texture_show(gpu, s.in_tab ? tab_texture : front_texture, surface, overlay, s.in_tab ? tab : front)) {
+			if (!texture_show(gpu, front_texture, surface, overlay, front)) {
 				fprintf(stderr, "pico4-onboarding: image not accepted\n");
 			}
 			dirty = false;
 		}
-		if (scene && room.ready) {
+		if (room.ready) {
 			room.frame(gpu, vrs.compositor);
 		} else {
-			usleep(s.shown || s.in_tab ? 16000 : 200000);
+			usleep(16000);
 		}
 	}
 	pair.finish();
 	status.finish();
 	cairo_surface_destroy(surface);
 	overlay->DestroyOverlay(front);
-	overlay->DestroyOverlay(tab);
 	vrs.shutdown();
-	if (again && !g_stop) {
-		printf("pico4-onboarding: the setup is done; again as a background application\n");
-		fflush(stdout);
-		execv("/proc/self/exe", argv);
-		perror("pico4-onboarding: execv");
-		return 1;
-	}
 	return 0;
 }

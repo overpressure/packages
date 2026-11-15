@@ -1,7 +1,7 @@
 // Copyright 2026, overpressure contributors.
 // SPDX-License-Identifier: BSL-1.0
 /*
- * The lens panel's layout and presets.
+ * Overpressure Settings' lens distance page: its layout and presets.
  *
  *   cc -std=gnu11 -Isrc/xr src/xr/test_pico4_lens_panel.c -lm -o test_pico4_lens_panel
  */
