@@ -475,8 +475,9 @@ enum pico4_setup_join
 
 /*!
  * The end of `nmcli device wifi connect` from its exit @p status and its @p output: nmcli reports a
- * refused password as missing secrets ("Secrets were required, but not provided"), a name not in
- * range as "No network with SSID ... found" (status 10).
+ * refused password as missing secrets ("Secrets were required, but not provided", or, when it asked
+ * again for the password and its input had ended, "Passwords or encryption keys are required"), a
+ * name not in range as "No network with SSID ... found" (status 10).
  */
 static inline enum pico4_setup_join
 pico4_setup_join_result(int status, const char *output)
@@ -484,7 +485,9 @@ pico4_setup_join_result(int status, const char *output)
 	if (status == 0) {
 		return PICO4_JOIN_OK;
 	}
-	if (output != NULL && (strstr(output, "Secrets were required") != NULL || strstr(output, "psk: property is invalid") != NULL)) {
+	if (output != NULL && (strstr(output, "Secrets were required") != NULL ||
+	                       strstr(output, "Passwords or encryption keys are required") != NULL ||
+	                       strstr(output, "psk: property is invalid") != NULL)) {
 		return PICO4_JOIN_PASSWORD;
 	}
 	if (status == 10 || (output != NULL && strstr(output, "No network with SSID") != NULL)) {

@@ -1395,12 +1395,19 @@ main(int argc, char **argv)
 			keyboard(true);
 		}
 	};
-	//! Join u.ssid: with the password on nmcli's input only, never on a command line.
+	/*
+	 * Join u.ssid: with the password on nmcli's input only, never on a command line. A typed password
+	 * replaces the network's profile: nmcli asks again for a stored one with its old value already in
+	 * the prompt, and the typed text would follow it.
+	 */
 	auto connect_network = [&]() {
-		std::vector<std::string> argv = {"nmcli", "--wait", "45"};
+		std::vector<std::string> argv;
 		const bool password = u.entry[0] != '\0';
 		if (password) {
-			argv.push_back("--ask");
+			argv = {"sh", "-c", "nmcli connection delete id \"$1\" >/dev/null 2>&1; shift; exec \"$@\"", "sh", u.ssid,
+			        "nmcli", "--wait", "45", "--ask"};
+		} else {
+			argv = {"nmcli", "--wait", "45"};
 		}
 		argv.insert(argv.end(), {"device", "wifi", "connect", u.ssid});
 		if (u.hidden) {

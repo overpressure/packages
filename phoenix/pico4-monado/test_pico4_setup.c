@@ -126,6 +126,8 @@ test_joining(void)
 	EXPECT(pico4_setup_join_result(4, "Error: Connection activation failed: Secrets were required, but not provided.\n") ==
 	       PICO4_JOIN_PASSWORD);
 	EXPECT(pico4_setup_join_result(4, "Error: 802-11-wireless-security.psk: property is invalid.") == PICO4_JOIN_PASSWORD);
+	EXPECT(pico4_setup_join_result(4, "Passwords or encryption keys are required to access the wireless network 'Cafe'.") ==
+	       PICO4_JOIN_PASSWORD);
 	EXPECT(pico4_setup_join_result(10, "Error: No network with SSID 'Cafe' found.") == PICO4_JOIN_NOT_FOUND);
 	EXPECT(pico4_setup_join_result(4, "Error: Connection activation failed: IP configuration could not be reserved") ==
 	       PICO4_JOIN_FAILED);
