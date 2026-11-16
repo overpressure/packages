@@ -21,7 +21,7 @@
  
  #if defined(__GNUC__)
  #pragma GCC diagnostic push
-@@ -1308,6 +1315,53 @@ public:
+@@ -1317,6 +1324,53 @@ public:
  	Connect(vr::PropertyContainerHandle_t *queue, const char *path) = 0;
  	virtual int
  	Destroy(vr::PropertyContainerHandle_t queue) = 0;
@@ -75,7 +75,7 @@
  };
  
  /*!
-@@ -1329,10 +1383,28 @@ public:
+@@ -1338,10 +1392,28 @@ public:
  	}
  
  	/*!
@@ -107,7 +107,7 @@
  	void
  	CreateMeshQueues()
  	{
-@@ -1342,19 +1414,42 @@ public:
+@@ -1351,19 +1423,42 @@ public:
  			ovrd_log("Camera: no IVRBlockQueue_005 (%d)\n", (int)err);
  			return;
  		}
@@ -151,7 +151,7 @@
  		for (int i = 0; i < 2; i++) {
  			if (m_queues != nullptr && m_mesh_queue[i] != 0) {
  				m_queues->Destroy(m_mesh_queue[i]);
-@@ -1632,6 +1727,11 @@ public:
+@@ -1641,6 +1736,11 @@ public:
  		               vr::k_unDoublePropertyTag);
  		p->SetProperty(props, vr::Prop_CameraWhiteBalance_Vector4_Array, white, sizeof(white),
  		               vr::k_unHmdVector4PropertyTag);
@@ -163,7 +163,7 @@
  	}
  
  private:
-@@ -1684,6 +1784,134 @@ private:
+@@ -1693,6 +1793,134 @@ private:
  		}
  	}
  
@@ -298,7 +298,7 @@
  	//! The HMD's pose at the exposure, as GetPose reports it.
  	vr::TrackedDevicePose_t
  	HeadPoseAt(int64_t at_ns)
-@@ -1718,6 +1946,15 @@ private:
+@@ -1727,6 +1955,15 @@ private:
  	int64_t m_start_ns = 0;
  	IVRBlockQueue005 *m_queues = nullptr;
  	vr::PropertyContainerHandle_t m_mesh_queue[2] = {0, 0};
@@ -314,3 +314,13 @@
  };
  
  /*!
+@@ -1912,6 +2149,9 @@ CDeviceDriver_Monado::Deactivate()
+ 	m_poseUpdateThread->join();
+ 	if (m_camera != NULL) {
+ 		m_camera->StopVideoStream();
++		// The mesh thread, too: vrserver unloads the driver after Deactivate without deleting the camera,
++		// and a thread still polling the HMD then runs in unmapped code.
++		m_camera->DestroyMeshQueues();
+ 	}
+ 	ovrd_log("Deactivate\n");
+ }

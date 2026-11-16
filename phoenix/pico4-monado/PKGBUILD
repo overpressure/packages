@@ -18,7 +18,7 @@
 # overlays (Overpressure Settings' dashboard tab, the first-run setup).
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=16
+pkgrel=17
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
@@ -65,7 +65,7 @@ sha256sums=(SKIP
             'a75e36318ddf16587a8bce0643b8b3bc008a83cb6cd29e34ed024c1fe913cfaa'
             '5df7942d43b14b60549244453c4677b559083d6015a7ae3d1414d4ead218c736'
             'd76bc4cfbfc012041459d0f1ef7ec9f6548db0b23fdafee90ed31b08a636b202'
-            '5a114886cd0470208b3cb5d697f33ffd7235db38f7c9990b860ce1ddde22ad32'
+            'b6dd669232aaeb617a8bec6ba72c566dd392102e379d293afa94be609e3ae95d'
             '41be8ce4a88a79a8f2b98cb82a8a4bcc4693890410acc1e9776bd16d347310f9'
             '079215437455bb24dabf36ca8598a43e69b25b7fbb20caebf8850fd7d137dc4e'
             '4ea7235b043e92d3ccb9a21277868a7afb2d8963a03d93a1623de8681a136ac6'
