@@ -1,4 +1,4 @@
-# The USB link to the PC: network, log drive and serial function (docs/install.md). The Frame's
+# The USB link to the PC: network and serial function (docs/install.md). The Frame's
 # own gadget units stay masked; this gadget is the one the maintenance stage 1 sets up too.
 [Unit]
 Description=USB link to the PC

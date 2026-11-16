@@ -69,7 +69,7 @@ python
 # The PICO 4's system around Valve's userspace (each package's preset enables its services): preinit,
 # storage and recovery policy, the USB link and network (pico4-base); fan, battery guard and power key
 # (pico4-power); sound (pico4-audio); the DSPs, IMU, station, lenses and cameras (pico4-xr); Valve's
-# session for the PICO 4 (pico4-session); the acceptance checks and log drive (pico4-checks)
+# session for the PICO 4 (pico4-session); the acceptance checks (pico4-checks)
 overpressure-phoenix/pico4-base
 overpressure-phoenix/pico4-power
 overpressure-phoenix/pico4-audio
@@ -145,9 +145,8 @@ inotify-tools
 # pico4-session.service replaces sddm.
 !sddm
 
-# Diagnostics (mtools: the stage-2 USB log drive)
+# Diagnostics
 deckard-arch-hotfixes-release-0.3/libdrm
-mtools
 evtest
 strace
 usbutils

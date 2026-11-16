@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Unlicense
 # Compact samples of the USB link after boot, written through log() (kernel log,
 # boot.log and pstore pmsg). pmsg survives a warm reboot, so the maintenance stage 1
-# exports them on its log drive even when the system's network was unusable.
+# still has them when the system's network was unusable.
 . /usr/libexec/pico4/lib.sh
 IFACE=""
 . /run/pico4/usb-link.env 2>/dev/null

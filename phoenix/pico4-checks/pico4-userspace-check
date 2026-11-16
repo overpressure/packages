@@ -131,10 +131,6 @@ if [ -s /run/pico4/usb-link.env ]; then
 	[ "$link_status" = up ] && grep -qw down <<<"$link_now" && link_status="link down"
 fi
 need "USB link up ($link_status)" [ "$link_status" = up ]
-# The USB mass-storage thread serves the log drive; losing it resets the PC's view of the device.
-if [ -d /sys/kernel/config/usb_gadget/pico4/functions/mass_storage.0 ]; then
-	need "USB mass-storage thread alive" grep -qx file-storage /proc/[0-9]*/comm
-fi
 # -- the session user (docs/session.md) ------------------------------------------
 # pico4-session.service logs steamos in through PAM and its user manager starts
 # Valve's session target; the target takes a moment after the system is up. The
