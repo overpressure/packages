@@ -10,7 +10,8 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location("plan", ROOT / "build/plan.py")
-assert SPEC and SPEC.loader
+assert SPEC
+assert SPEC.loader
 plan = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(plan)
 
@@ -43,8 +44,10 @@ class Plan(unittest.TestCase):
 
     def test_a_job_per_package_without_the_local_ones(self) -> None:
         jobs = plan.plan(["h"], "image")
-        self.assertEqual([(j["layer"], j["name"]) for j in jobs],
-                         [("common", "overpressure-a"), ("common", "overpressure-b"), ("h", "h-c")])
+        self.assertEqual(
+            [(j["layer"], j["name"]) for j in jobs],
+            [("common", "overpressure-a"), ("common", "overpressure-b"), ("h", "h-c")],
+        )
         self.assertEqual({j["headset"] for j in jobs}, {"h"})
 
     def test_a_recipe_change_moves_only_its_key(self) -> None:

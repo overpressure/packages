@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: Unlicense
+# The linters' settings, overpressure's (https://github.com/overpressure/overpressure/blob/main/pyproject.toml);
+# nothing here is a Python package. CI runs ruff and ty pinned through uvx (.github/workflows/packages.yml).
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+# The Python programs without an extension, which ruff does not find by itself: every tracked file whose
+# shebang runs Python (tests/test_layout.py checks that each one is listed, here and for ty).
+extend-include = [
+    "phoenix/pico4-audio/micmute",
+    "phoenix/pico4-audio/pico4-audiocal",
+    "phoenix/pico4-base/bt-address",
+    "phoenix/pico4-base/usb-internet",
+    "phoenix/pico4-checks/msm-frame-stats",
+    "phoenix/pico4-checks/pico4-support-bundle",
+    "phoenix/pico4-checks/pico4-suspend-check",
+    "phoenix/pico4-checks/session-performance",
+    "phoenix/pico4-power/battery-guard",
+    "phoenix/pico4-power/pico4-fan",
+    "phoenix/pico4-power/powerkey",
+    "phoenix/pico4-session/steam-language",
+    "phoenix/pico4-session/steam-proton-mapping",
+    "phoenix/pico4-session/steamvr-settings",
+    "phoenix/pico4-xr/pico4-imu",
+    "phoenix/pico4-xr/pico4-lens",
+    "phoenix/pico4-xr/pico4-listeners",
+    "phoenix/pico4-xr/pico4-station",
+    "phoenix/pico4-xr/pico4-still-gate",
+]
+
+[tool.ruff.lint]
+# Every rule. What is off below conflicts with another rule, with the formatter or with how the
+# project is built, and says so; everything else is fixed, or carries a noqa with its reason.
+select = ["ALL"]
+ignore = [
+    # Incompatible with D211 and D212, which ruff keeps: no blank line before a class docstring,
+    # and a multi-line docstring's summary on its first line.
+    "D203",
+    "D213",
+    # The formatter places trailing commas (ruff's documented conflict).
+    "COM812",
+    # pytest's style: the tests are unittest (standard library only), whose assertion methods
+    # report what differed; a bare assert does not, and S101 forbids it.
+    "PT009",
+    "PT027",
+    # One with statement for several contexts needs parentheses from Python 3.10 on to wrap.
+    "SIM117",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: their names say what they check, as docstrings would; they return nothing; their expected
+# values are literals by nature, and ty's narrowing uses assert.
+"{tests/**,**/test_*.py}" = ["D101", "D102", "D105", "D107", "ANN201", "ANN204", "PLR2004", "S101"]
+# Everything but the tests is a program, run by its path: print is its output, and its folder is no package.
+"{build,common,sm8250,phoenix}/**" = ["INP001", "T201"]
+
+[tool.ruff.lint.flake8-copyright]
+# The project's files name their license by SPDX identifier; the Unlicense has no copyright holder.
+notice-rgx = "SPDX-License-Identifier: "
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ty.environment]
+python-version = "3.9"
+# The build's scripts and the tests run on any system, the headset's programs on Linux: check every branch.
+python-platform = "all"
+
+[tool.ty.src]
+# The Python files, the programs without an extension named one by one as for ruff.
+include = [
+    "build",
+    "tests",
+    "common",
+    "sm8250",
+    "phoenix",
+    "phoenix/pico4-audio/micmute",
+    "phoenix/pico4-audio/pico4-audiocal",
+    "phoenix/pico4-base/bt-address",
+    "phoenix/pico4-base/usb-internet",
+    "phoenix/pico4-checks/msm-frame-stats",
+    "phoenix/pico4-checks/pico4-support-bundle",
+    "phoenix/pico4-checks/pico4-suspend-check",
+    "phoenix/pico4-checks/session-performance",
+    "phoenix/pico4-power/battery-guard",
+    "phoenix/pico4-power/pico4-fan",
+    "phoenix/pico4-power/powerkey",
+    "phoenix/pico4-session/steam-language",
+    "phoenix/pico4-session/steam-proton-mapping",
+    "phoenix/pico4-session/steamvr-settings",
+    "phoenix/pico4-xr/pico4-imu",
+    "phoenix/pico4-xr/pico4-lens",
+    "phoenix/pico4-xr/pico4-listeners",
+    "phoenix/pico4-xr/pico4-station",
+    "phoenix/pico4-xr/pico4-still-gate",
+]

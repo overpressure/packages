@@ -62,7 +62,7 @@ def write(folder: Path) -> None:
 
 def main() -> None:
     """Rewrite each named recipe."""
-    if len(sys.argv) < 2:
+    if not sys.argv[1:]:
         raise SystemExit(__doc__)
     for name in sys.argv[1:]:
         write(Path(name))

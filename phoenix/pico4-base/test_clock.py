@@ -2,8 +2,8 @@
 """The wall clock from the RTC and PICO OS's offset in persist (pico4-clock)."""
 
 import os
-import struct
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest

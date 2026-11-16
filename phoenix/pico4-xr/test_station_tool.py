@@ -16,7 +16,8 @@ from unittest import mock
 
 PATH = Path(__file__).resolve().parent / "pico4-station"
 if sys.platform == "win32":
-    raise unittest.SkipTest("pico4-station needs Linux's fcntl")
+    message = "pico4-station needs Linux's fcntl"
+    raise unittest.SkipTest(message)
 _loader = importlib.machinery.SourceFileLoader("pico4_station_tool", str(PATH))
 _spec = importlib.util.spec_from_loader("pico4_station_tool", _loader)
 assert _spec is not None

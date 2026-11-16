@@ -6,7 +6,7 @@
 # The preset enables the services; the tests run in the build.
 pkgname=pico4-base
 pkgver=1
-pkgrel=3
+pkgrel=4
 pkgdesc="PICO 4 system: preinit, storage and recovery policy, USB link, network, clock, firmware probes"
 arch=(any)
 url="https://github.com/overpressure/phoenix/tree/main/docs"
@@ -118,7 +118,7 @@ sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
             '4558eeb49f836c192e33fa06f5ab2e8d0b95f47ada59e8ef43e74b6bb0b58650'
             'e595217122c5d1d7c1fe2d2102728704659e3ebf9f9bbad044925741d3c95dd6'
             '95a1344e4d74defeae8d67e504368ab433aceea7fb645a997f7dba57cd4cffe2'
-            'ceda368892338bcfb01011736930e14262c4cc5d1d99c2fa1a682b9cfe410dbf'
+            '57f67674c074e8f276faaf54cf7eb8a3949be4638eba41fdae23e1577a8beac7'
             'e70848b47705026cd480904c0b00f9eb28edba124f4c1583f835233cef902176'
             'aef6ca675b62fc2662158ead16df9ee2163c6cdd045ead0dd17bf6d40e08dcfa'
             '07d2a70365730acc970ac204a84f7c2cf14602aa0945998a494073d2e92839f3'
@@ -126,8 +126,8 @@ sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
             'c2b47f379380857cd47df25225bbba90268f6aaea75e6b97add802913c1be322'
             '9f67cd7728c262fdbea23fa91b4c3ae1607b19e2be5dbed6920c63dd4527ae6e'
             'e1b7bf74abc4b10665eb3ccdd83ab43d050a432e834d870be9faef0fa3fe9152'
-            'ca509d34ccacbdcde894d032dc1549cf829821498c6b46e6694378fe69c68271'
-            '8886a1a87f0f3a3f123764992deacc61c9af6e802ad05b70a80ac74d815686c6'
+            '55878f20ae9a671b8097681faa9001f81701e8095b72dd2f582e9c9f924d11ae'
+            '2718eeca7f256d7f5af3b368f2ba7c3115791797e9560633cd5343e99c549933'
             '2b1d293a8b30e06617ac87ac16e2ab82b5d09a4f7fc4c4e7c7c86f193ee35474'
             'efc4c843f5335d5ed72f87585cd0edfa98107957496380580d5b77792ac5e60a'
             '773d6276040a1d5625d1e53aaaccf7ecd380e877454f657c8e293e98fb4ad905'

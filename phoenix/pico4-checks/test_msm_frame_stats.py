@@ -1,12 +1,17 @@
 # SPDX-License-Identifier: Unlicense
 """msm-frame-stats: frame statistics from the msm display driver's trace events."""
 
+from __future__ import annotations
+
 import importlib.machinery
 import importlib.util
 import json
 import unittest
-from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 HERE = Path(__file__).resolve().parent
 PATH = HERE / "msm-frame-stats"
@@ -159,7 +164,7 @@ class QuietTests(unittest.TestCase):
         now = [0.0]
         windows = []
 
-        def measure(seconds: float, pid: int) -> dict:
+        def measure(seconds: float, _pid: int) -> dict:
             windows.append(seconds)
             now[0] += seconds
             share = shares[min(len(windows), len(shares)) - 1]

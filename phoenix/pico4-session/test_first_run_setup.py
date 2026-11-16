@@ -133,8 +133,9 @@ class WaitTests(unittest.TestCase):
     SCRIPT = HERE / "wait-first-run"
 
     def run_script(self, home: str, *args: str) -> int:
+        assert BASH is not None  # the tests are skipped without bash
         return subprocess.run(  # noqa: S603  # bash from PATH runs the script under test
-            [BASH, str(self.SCRIPT), *args],  # noqa: S607  # bash from PATH
+            [BASH, str(self.SCRIPT), *args],  # bash from PATH
             env={"HOME": home, "PATH": "/usr/bin:/bin"},
             capture_output=True,
             timeout=10,
@@ -173,10 +174,11 @@ class WaitTests(unittest.TestCase):
 @unittest.skipIf(NO_BASH, "runs bash scripts: needs bash on PATH (Git's on Windows, not WSL's)")
 class TimezoneTests(unittest.TestCase):
     def test_the_helper_takes_only_zone_names(self):
+        assert BASH is not None  # the tests are skipped without bash
         for zone in ("", "/etc/passwd", "../../etc/passwd", "Europe/Paris;reboot", "Mars/Olympus"):
             # The helper under test, with made-up zones.
             result = subprocess.run(  # noqa: S603  # bash from PATH runs the helper
-                [BASH, str(TIMEZONE), zone],  # noqa: S607  # bash from PATH
+                [BASH, str(TIMEZONE), zone],  # bash from PATH
                 capture_output=True,
                 text=True,
                 check=False,

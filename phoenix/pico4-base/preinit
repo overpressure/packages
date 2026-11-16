@@ -100,7 +100,7 @@ done
 # Stable per headset, so journals of different boots belong together.
 device_serial | md5sum | cut -c1-32 > /etc/machine-id
 
-# PICO OS's files (overpressure's docs/install.md#pico-oss-files): the image holds none, only links.
+# PICO OS's files (overpressure/phoenix's docs/install.md#pico-oss-files): the image holds none, only links.
 # Its modem, dsp and bluetooth partitions, which nothing writes, are mounted read-only as they are:
 # the DSPs', the video codec's and the wireless chip's firmware, where the kernel's firmware path
 # and the links point. What the install overwrote (system and vendor in super) is on the data

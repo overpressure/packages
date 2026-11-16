@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Unlicense
 """The system's policy files: core dump limit, memory, watchdog, SSH and Wi-Fi."""
 
+from __future__ import annotations
+
 import configparser
 import unittest
 from pathlib import Path

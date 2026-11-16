@@ -15,8 +15,9 @@ MANAGER = Path(__file__).resolve().parent / "atomupd-manager"
 
 def manager(*args: str) -> subprocess.CompletedProcess[str]:
     """Run the recipe's atomupd-manager under bash."""
+    assert BASH is not None  # the tests are skipped without bash
     return subprocess.run(  # noqa: S603  # the recipe's script under bash, no shell
-        [BASH, str(MANAGER), *args],  # noqa: S607  # bash from PATH
+        [BASH, str(MANAGER), *args],  # bash from PATH
         capture_output=True,
         text=True,
         check=False,

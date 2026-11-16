@@ -12,15 +12,16 @@ image, so that an image's build downloads them instead of compiling them.
 | --- | --- | --- |
 | `common/` | packages for Valve's Frame userspace on any headset: GTK 2, MangoHud, gamescope, PipeWire's ALSA plugin, libdisplay-info 0.1 | `overpressure-*` |
 | `sm8250/` | packages for the Snapdragon XR2 (SM8250): hexagonrpc, the DSPs' file server | `sm8250-*` |
-| `phoenix/` | packages for the PICO 4: Monado with the PICO 4's driver and its tools, Basalt with the PICO 4's settings, the compositor's swapchain layer, Steam Link's controller shim, the graphics test, and the system around Valve's userspace with its tests: `pico4-base` (preinit, storage and recovery policy, USB link, network), `pico4-power` (fan, battery guard, power key), `pico4-audio`, `pico4-xr` (DSPs, IMU, station, lenses, cameras), `pico4-session` (Valve's session and SteamVR's settings), `pico4-checks` (the acceptance checks); each one's preset enables its units | `pico4-*` |
+| `phoenix/` | packages for the PICO 4: Monado with the PICO 4's driver and its tools, Basalt with the PICO 4's settings, `pico4-slamd` (the default head tracker: the host for PICO OS's libSlam on the CDSP), the compositor's swapchain layer, Steam Link's controller shim, the graphics test, and the system around Valve's userspace with its tests: `pico4-base` (preinit, storage and recovery policy, USB link, network), `pico4-power` (fan, battery guard, power key), `pico4-audio`, `pico4-xr` (DSPs, IMU, station, lenses, cameras), `pico4-session` (Valve's session and SteamVR's settings), `pico4-checks` (the acceptance checks); each one's preset enables its units | `pico4-*` |
 | `headsets/<codename>/` | a headset's image definition: `layers`, `pacman.conf`, `packages.txt`, `packages.lock` | |
-| `build/packages.sh`, `build/plan.py` | the build of a headset's packages; the jobs and cache keys CI builds them with | |
-| `tests/` | the checks of the layout and of the build plan | |
+| `build/packages.sh`, `build/plan.py`, `build/notes.py` | the build of a headset's packages; the jobs and cache keys CI builds them with; a release's notes | |
+| `tests/` | the checks of the layout, of the build plan, of the release notes and of pico4-monado's texts | |
 
 Each folder in a layer is one recipe, a `PKGBUILD` with the files it builds, installs or applies beside
 it, the project's own code among them; a code package's unit tests run in its `build()`. A recipe pins
 its upstream by version and hash or by commit, and its local files by hash: `python3 build/sums.py
-LAYER/RECIPE` writes those after a change.
+LAYER/RECIPE` writes those after a change. A `docs/...` path in a recipe's comments is one of
+[overpressure/phoenix's documents](https://github.com/overpressure/phoenix/tree/main/docs).
 
 ## Image definitions
 
@@ -65,6 +66,7 @@ From a checkout of overpressure, `python -m overpressure container run -- bash .
 ```sh
 python3 -m unittest -v      # the layout: layers, names, recipes' local sources, image definitions
 python3 build/shellcheck.py   # every tracked shell script, the recipes' too, down to its warnings
+uvx ruff@0.17.4 format --check . && uvx ruff@0.17.4 check . && uvx ty@0.0.98 check   # the Python code (pyproject.toml)
 ```
 
 ## Releases
@@ -85,6 +87,23 @@ released tags never move or disappear (rulesets). The release's download folder 
 [overpressure-common]
 Server = https://github.com/overpressure/packages/releases/download/<tag>
 ```
+
+A release's notes open with its tag's message, then list the commits and the packages added, removed or at
+another version since the previous release, and its commit. The pull request's last job, `ci`, passes only when
+every job before it passed; it is the check `main` requires.
+
+### A release
+
+1. Merge the pull request; its CI built every package it changed.
+2. Tag the merged `main` commit with an annotated tag `YYYY.MM.DD` (a second one that day `YYYY.MM.DD.1`, ...),
+   whose message says what the release brings, and push the tag. The release job refuses a lightweight tag and
+   one that is not on `main`; it publishes the packages that the pull request built.
+3. A consumer pins the release's tag, its commit and the SHA-256 of its `SHA256SUMS` (the PICO 4's:
+   `userspace/packages.json` in [overpressure/phoenix](https://github.com/overpressure/phoenix)).
+
+Releases are exact pins, so there are no preview or beta channels. A preview is a CI run's `packages` artifact
+(of `main` or a pull request), or a checkout of this repository built into an image (the PICO 4's
+`build-userspace.sh --packages DIR`).
 
 ## License
 

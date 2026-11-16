@@ -105,8 +105,8 @@ sha256sums=('6dd8cda751033318aca350f3dbbed8a29860431777488b4acc042e8f1b9572b3'
             '6d82af321ff0d4987f0c8e58f02b8d0bce90904b9e53c6d7321d478bfeac805f'
             '6ec565db07ed8b08cdfac49afada3f319a4c010c225635fb6062c6f5310f3883'
             '0d023d0e215d653db55842eb38a033a453560899385a774bea4edf6c11f5ae2e'
-            '48f9637c61cb11f929fec776f59e8e800679c33d35be96fdfa32021ca0eea19c'
-            '6bd36ca82bdcc7d41396d63a8f09c83c4ff860b264986d11f6535aa6a241006a')
+            'fb6e493979863bb31fbfc8e8fc12f25a5f3fabd6bf36f4ef2360cafca1d905e0'
+            'f1ccf770b2bca31d4e4e9fc5eaf74cf686b6795febdac0e968bba34daf3b67e6')
 
 build() {
   python3 -B -m unittest test_session_units test_steamvr_settings test_steam_proton_mapping test_vr_performance test_first_run_setup test_atomupd

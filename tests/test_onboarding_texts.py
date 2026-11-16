@@ -36,7 +36,8 @@ class Texts(unittest.TestCase):
 
     def test_every_key_the_panel_uses_is_in_english_and_every_text_is_used(self) -> None:
         source = "".join(
-            (RECIPE / name).read_text(encoding="utf-8") for name in ("pico4-onboarding.cpp", "overpressure-settings.cpp")
+            (RECIPE / name).read_text(encoding="utf-8")
+            for name in ("pico4-onboarding.cpp", "overpressure-settings.cpp")
         )
         english = self.languages["english"]
         self.assertFalse(set(re.findall(r'our\("([a-z_]+)"\)', source)) - set(english), "keys without English text")
