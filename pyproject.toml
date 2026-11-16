@@ -46,6 +46,9 @@ ignore = [
     "PT027",
     # One with statement for several contexts needs parentheses from Python 3.10 on to wrap.
     "SIM117",
+    # The programs are sources here: each PKGBUILD installs them with their mode (install -Dm755), and the build
+    # scripts run as python3 build/NAME.py. A checkout's file mode is no verdict.
+    "EXE001",
 ]
 
 [tool.ruff.lint.per-file-ignores]
