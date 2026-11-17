@@ -7,15 +7,15 @@
 # A release is started by hand on main (Run workflow, with what it brings): the run builds as any push does,
 # then tags main's commit with the next free date (YYYY.MM.DD, or YYYY.MM.DD.N) and publishes the packages as a
 # release: per layer its packages and its database, and the copyleft packages' complete sources, with notes on
-# what changed since the previous release. Only this workflow creates those tags (a ruleset); a tag pushed by
-# hand before that rule still releases as it did. A release's download folder is a pacman server for every layer.
+# what changed since the previous release. Only a run started by hand releases: a date tag pushed by hand
+# releases nothing, and the next release skips its name. A release's download folder is a pacman server for every
+# layer.
 # The last job, ci, passes only when every job before it passed: the one check main's ruleset requires.
 name: Packages
 
 on:
   push:
     branches: [main]
-    tags: ["[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]*"]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -30,12 +30,12 @@ permissions:
 concurrency:
   group: packages-${{ github.ref }}-${{ github.event_name }}
   # A release, by tag or started by hand, is never cancelled by a later push.
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.release == '' }}
+  cancel-in-progress: ${{ inputs.release == '' }}
 
 env:
   BUILDER: ghcr.io/overpressure/builder:2026.11.12@sha256:ba4a5ec8adb886b60b873b28d7d6454abd40c1a58d08a6f6fd7d5efc65d8e4b2
   HEADSETS: phoenix
-  RELEASE: ${{ startsWith(github.ref, 'refs/tags/') || inputs.release != '' }}
+  RELEASE: ${{ inputs.release != '' }}
 
 jobs:
   layout:
@@ -156,7 +156,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release != '')
+    if: github.event_name == 'workflow_dispatch' && inputs.release != ''
     needs: databases
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -166,9 +166,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the history and the tags: what changed since the previous release
-      - name: The tag, made here when the release was started by hand
+      - name: The tag
         id: tag
-        if: github.event_name == 'workflow_dispatch'
         env:
           WHAT: ${{ inputs.release }}
         run: |
@@ -197,7 +196,7 @@ jobs:
           echo "name=$name" >> "$GITHUB_OUTPUT"
       - name: An annotated tag on main
         env:
-          TAG: ${{ steps.tag.outputs.name || github.ref_name }}
+          TAG: ${{ steps.tag.outputs.name }}
         run: |
           set -euo pipefail
           # The tag object and main as they are on origin: checkout may leave an annotated tag as a lightweight one.
@@ -217,7 +216,7 @@ jobs:
       - name: The release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.tag.outputs.name || github.ref_name }}
+          TAG: ${{ steps.tag.outputs.name }}
         run: |
           set -euo pipefail
           # One file per name: headsets that share a layer build its packages alike, or the release stops.

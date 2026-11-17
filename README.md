@@ -71,7 +71,7 @@ uvx ruff@0.17.4 format --check . && uvx ruff@0.17.4 check . && uvx ty@0.0.98 che
 
 ## Releases
 
-Every pull request, push to `main` and tag builds each package in its own job on an arm64 runner
+Every pull request and push to `main` builds each package in its own job on an arm64 runner
 ([packages.yml](.github/workflows/packages.yml)); one job then writes each layer's database. A package's
 key ([build/plan.py](build/plan.py)) hashes everything its bytes depend on: its recipe folder,
 `build/packages.sh`, the build image's digest and what the build environment takes from the headset's
@@ -80,8 +80,9 @@ repository. Adding one of the project's packages to `packages.txt` moves no othe
 a key built before comes from `main`'s cache or from the artifact an earlier run of this repository left under
 it (a pull request's, never a fork's), so a change builds only the packages it touches, once, on its pull
 request. A release publishes those builds under a tag `YYYY.MM.DD` (or `YYYY.MM.DD.N`): every layer's packages
-and database, the copyleft packages' sources and `SHA256SUMS`. `main` changes only by pull request, only the
-release workflow creates release tags, and they never move or disappear (rulesets). The release's download folder is a pacman server for every layer:
+and database, the copyleft packages' sources and `SHA256SUMS`. `main` changes only by pull request, only a release
+started by hand releases (a date tag pushed by hand releases nothing), and released tags never move or disappear
+(rulesets). The release's download folder is a pacman server for every layer:
 
 ```ini
 [overpressure-common]
