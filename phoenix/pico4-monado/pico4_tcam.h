@@ -74,6 +74,19 @@ bool
 pico4_tcam_fit_kb4(const struct pico4_tcam_omni *c, struct pico4_tcam_kb4 *out);
 
 /*!
+ * The angle off the RGB camera's axis the room view shows, with a margin: the view's edge lies at about 55-60
+ * degrees. Fitted only up to here, the corners the headset never shows (up to 12 px off at 80-90 degrees) no
+ * longer pull the fit off inside the view, where its error swung and made the room wobble toward the edges.
+ */
+#define PICO4_TCAM_ROOMVIEW_DEG 70.0
+
+/*!
+ * Fit as pico4_tcam_fit_kb4() does, over the rays up to @p max_deg off the axis only.
+ */
+bool
+pico4_tcam_fit_kb4_within(const struct pico4_tcam_omni *c, double max_deg, struct pico4_tcam_kb4 *out);
+
+/*!
  * Describe the same camera with its image turned by 180 degrees (pixel (u, v)
  * read at (width - 1 - u, height - 1 - v)): the principal point moves and the
  * camera frame turns about its optical axis.

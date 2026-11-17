@@ -1555,8 +1555,11 @@ cameras:
 			struct pico4_passthrough_info info;
 			pico4_passthrough_rgb_info(s->passthrough, &info);
 			const double *m = info.camera_to_head[0];
-			SLAM_INFO(s, "Room view from the RGB camera: %ux%u, at %.3f %.3f %.3f m, looking %.2f %.2f %.2f",
-			          info.width, info.height, m[3], m[7], m[11], -m[2], -m[6], -m[10]);
+			SLAM_INFO(s,
+			          "Room view from the RGB camera: %ux%u, at %.3f %.3f %.3f m, looking %.2f %.2f %.2f; "
+			          "lens fit up to %.0f degrees: rms %.2f px, max %.2f px",
+			          info.width, info.height, m[3], m[7], m[11], -m[2], -m[6], -m[10], PICO4_TCAM_ROOMVIEW_DEG,
+			          info.fit_rms_px, info.fit_max_px);
 		} else {
 			SLAM_WARN(s, "No calibration of the RGB camera (cam4) in %s: the room view stays grey", calibration_dir);
 		}

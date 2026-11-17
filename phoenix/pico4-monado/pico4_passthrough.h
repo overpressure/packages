@@ -39,6 +39,8 @@ struct pico4_passthrough_info
 	 * HmdMatrix34_t, in OpenVR's camera axes (x right, y up, looking along -z).
 	 */
 	double camera_to_head[PICO4_PASSTHROUGH_CAMS][12];
+	//! The RGB camera's KB4 fit against its factory model, in pixels of the image the room view gets.
+	double fit_rms_px, fit_max_px;
 };
 
 //! One delivered frame.

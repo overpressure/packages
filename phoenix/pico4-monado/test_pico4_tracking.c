@@ -300,6 +300,28 @@ test_calibration(void)
 	printf("RGB KB4 fit: rms %.3f px, max %.3f px over %d rays\n", rk.rms_px, rk.max_px, rk.samples);
 	EXPECT(rk.samples > 1000);
 
+	// The room view's fit, over the angles it shows only: closer to the factory model wherever the view looks.
+	struct pico4_tcam_kb4 rv;
+	EXPECT(pico4_tcam_fit_kb4_within(&rgb, PICO4_TCAM_ROOMVIEW_DEG, &rv));
+	EXPECT(rv.samples > 1000 && rv.cx == rgb.pu && rv.cy == rgb.pv);
+	double full_worst = 0, view_worst = 0;
+	for (int deg = 5; deg <= 60; deg += 5) {
+		for (int az = 0; az < 360; az += 10) {
+			double t = deg * M_PI / 180, f = az * M_PI / 180;
+			double ray[3] = {sin(t) * cos(f), sin(t) * sin(f), cos(t)}, want[2], got[2];
+			if (!pico4_tcam_omni_project(&rgb, ray, want)) {
+				continue;
+			}
+			pico4_tcam_kb4_project(&rk, ray, got);
+			full_worst = fmax(full_worst, hypot(got[0] - want[0], got[1] - want[1]));
+			pico4_tcam_kb4_project(&rv, ray, got);
+			view_worst = fmax(view_worst, hypot(got[0] - want[0], got[1] - want[1]));
+		}
+	}
+	printf("RGB fit within 60 degrees: worst %.3f px fitted to %.0f degrees, %.3f px fitted to the corners\n",
+	       view_worst, PICO4_TCAM_ROOMVIEW_DEG, full_worst);
+	EXPECT(view_worst < full_worst);
+
 	// A camera turned by 180 degrees sees a body point at the mirrored pixel.
 	struct pico4_tcam_kb4 r = k;
 	double T[16];

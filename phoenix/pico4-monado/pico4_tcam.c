@@ -156,7 +156,7 @@ struct sample
  * image and moves outwards (the radtan polynomial folds back far out).
  */
 static int
-make_samples(const struct pico4_tcam_omni *c, struct sample *s, int max)
+make_samples(const struct pico4_tcam_omni *c, double max_theta, struct sample *s, int max)
 {
 	const int azimuths = 72, steps = 120;
 	int n = 0;
@@ -164,7 +164,7 @@ make_samples(const struct pico4_tcam_omni *c, struct sample *s, int max)
 		double phi = 2 * M_PI * a / azimuths;
 		double last_r = -1;
 		for (int i = 1; i <= steps && n < max; i++) {
-			double theta = (M_PI * 0.75) * i / steps; // up to 135 degrees off axis
+			double theta = max_theta * i / steps;
 			double p[3] = {sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta)};
 			double uv[2];
 			if (!pico4_tcam_omni_project(c, p, uv)) {
@@ -252,12 +252,18 @@ solve(double a[NPARAM][NPARAM], double b[NPARAM], double x[NPARAM])
 bool
 pico4_tcam_fit_kb4(const struct pico4_tcam_omni *c, struct pico4_tcam_kb4 *out)
 {
+	return pico4_tcam_fit_kb4_within(c, 135.0, out); // as far as the image reaches
+}
+
+bool
+pico4_tcam_fit_kb4_within(const struct pico4_tcam_omni *c, double max_deg, struct pico4_tcam_kb4 *out)
+{
 	const int max = 72 * 120;
 	struct sample *s = calloc(max, sizeof(*s));
 	if (s == NULL) {
 		return false;
 	}
-	int n = make_samples(c, s, max);
+	int n = make_samples(c, max_deg * M_PI / 180, s, max);
 	// Near the axis the omni model scales tan-angles by f / (1 + xi).
 	double x[NPARAM] = {c->fu / (1 + c->xi), c->fv / (1 + c->xi), 0, 0, 0, 0};
 	double lambda = 1e-3, f = cost(x, c->pu, c->pv, s, n);

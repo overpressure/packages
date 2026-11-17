@@ -414,7 +414,9 @@ pico4_passthrough_use_rgb(struct pico4_passthrough *p, const char *calibration_d
 	char *text = read_file(path);
 	struct pico4_tcam_omni omni;
 	struct pico4_tcam_kb4 kb4;
-	bool ok = text != NULL && pico4_tcam_parse_yaml(text, &omni) && pico4_tcam_fit_kb4(&omni, &kb4) &&
+	// Fitted over the angles the room view shows only (PICO4_TCAM_ROOMVIEW_DEG).
+	bool ok = text != NULL && pico4_tcam_parse_yaml(text, &omni) &&
+	          pico4_tcam_fit_kb4_within(&omni, PICO4_TCAM_ROOMVIEW_DEG, &kb4) &&
 	          omni.width == PICO4_PASSTHROUGH_RGB_SRC_W && omni.height == PICO4_PASSTHROUGH_RGB_SRC_H;
 	free(text);
 	if (!ok || p->exporting) {
@@ -429,6 +431,8 @@ pico4_passthrough_use_rgb(struct pico4_passthrough *p, const char *calibration_d
 	memset(i, 0, sizeof(*i));
 	i->width = PICO4_PASSTHROUGH_RGB_W;
 	i->height = PICO4_PASSTHROUGH_RGB_H;
+	i->fit_rms_px = kb4.rms_px / 2;
+	i->fit_max_px = kb4.max_px / 2;
 	for (int c = 0; c < PICO4_PASSTHROUGH_CAMS; c++) {
 		// One pixel per 2x2 cell: cell x covers sensor columns 2x and 2x + 1, centred on 2x + 0.5.
 		i->fx[c] = kb4.fx / 2;
