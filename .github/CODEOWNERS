@@ -1,0 +1,7 @@
+# Who has to approve a change (docs: GOVERNANCE.md in overpressure/.github). A path without an owner needs no
+# approval beyond the ruleset of its branch.
+
+*                   @overpressure/core
+/sm8250/            @overpressure/soc-sm8250 @overpressure/core
+/phoenix/           @overpressure/phoenix @overpressure/core
+/headsets/phoenix/  @overpressure/phoenix @overpressure/core
