@@ -4,9 +4,11 @@
 # built once per key (build/plan.py: its recipe, the build script, the image, the headset's definition):
 # a key built before comes from main's cache, or from the artifact an earlier run of this repository (never
 # a fork's) left under that key, such as the pull request's. One job then writes each layer's database.
-# A tag (YYYY.MM.DD, or YYYY.MM.DD.N, annotated, on main) publishes the packages its pull request built as a
+# A release is started by hand on main (Run workflow, with what it brings): the run builds as any push does,
+# then tags main's commit with the next free date (YYYY.MM.DD, or YYYY.MM.DD.N) and publishes the packages as a
 # release: per layer its packages and its database, and the copyleft packages' complete sources, with notes on
-# what changed since the previous release. A release's download folder is a pacman server for every layer.
+# what changed since the previous release. Only this workflow creates those tags (a ruleset); a tag pushed by
+# hand before that rule still releases as it did. A release's download folder is a pacman server for every layer.
 # The last job, ci, passes only when every job before it passed: the one check main's ruleset requires.
 name: Packages
 
@@ -16,18 +18,24 @@ on:
     tags: ["[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "What this release brings (one line, it opens the notes); empty: only a build of main"
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: packages-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: packages-${{ github.ref }}-${{ github.event_name }}
+  # A release, by tag or started by hand, is never cancelled by a later push.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.release == '' }}
 
 env:
   BUILDER: ghcr.io/overpressure/builder:2026.11.12@sha256:ba4a5ec8adb886b60b873b28d7d6454abd40c1a58d08a6f6fd7d5efc65d8e4b2
   HEADSETS: phoenix
-  RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
+  RELEASE: ${{ startsWith(github.ref, 'refs/tags/') || inputs.release != '' }}
 
 jobs:
   layout:
@@ -148,7 +156,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release != '')
     needs: databases
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -158,17 +166,48 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the history and the tags: what changed since the previous release
+      - name: The tag, made here when the release was started by hand
+        id: tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          WHAT: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "a release is started on main, not on $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          git fetch --force --tags origin "+refs/heads/main:refs/remotes/origin/main"
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "main moved since this run started: start the release again" >&2
+            exit 1
+          fi
+          # The next free name of the day: YYYY.MM.DD, then YYYY.MM.DD.1, ...
+          day=$(date -u +%Y.%m.%d)
+          name=$day
+          n=0
+          while git rev-parse -q --verify "refs/tags/$name" > /dev/null; do
+            n=$((n + 1))
+            name=$day.$n
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$name" -m "$WHAT" -m "Started by @$GITHUB_ACTOR." "$GITHUB_SHA"
+          git push origin "refs/tags/$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
       - name: An annotated tag on main
+        env:
+          TAG: ${{ steps.tag.outputs.name || github.ref_name }}
         run: |
           set -euo pipefail
           # The tag object and main as they are on origin: checkout may leave an annotated tag as a lightweight one.
-          git fetch --force origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" "+refs/heads/main:refs/remotes/origin/main"
-          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" != tag ]; then
-            echo "$GITHUB_REF_NAME is a lightweight tag: a release needs an annotated one, whose message opens its notes" >&2
+          git fetch --force origin "+refs/tags/$TAG:refs/tags/$TAG" "+refs/heads/main:refs/remotes/origin/main"
+          if [ "$(git cat-file -t "$TAG")" != tag ]; then
+            echo "$TAG is a lightweight tag: a release needs an annotated one, whose message opens its notes" >&2
             exit 1
           fi
-          if ! git merge-base --is-ancestor "$GITHUB_REF_NAME^{commit}" origin/main; then
-            echo "$GITHUB_REF_NAME is not on main: a release is a merged main commit" >&2
+          if ! git merge-base --is-ancestor "$TAG^{commit}" origin/main; then
+            echo "$TAG is not on main: a release is a merged main commit" >&2
             exit 1
           fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -178,6 +217,7 @@ jobs:
       - name: The release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.name || github.ref_name }}
         run: |
           set -euo pipefail
           # One file per name: headsets that share a layer build its packages alike, or the release stops.
@@ -189,17 +229,17 @@ jobs:
           (cd release && sha256sum -- * > SHA256SUMS)
           # The previous release: the one whose tag sorts last before this one by version; none for the first.
           gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName --jq '.[].tagName' > releases
-          previous=$({ cat releases; echo "$GITHUB_REF_NAME"; } | sort -uV | grep -xF -B1 "$GITHUB_REF_NAME" | head -n -1)
+          previous=$({ cat releases; echo "$TAG"; } | sort -uV | grep -xF -B1 "$TAG" | head -n -1)
           since=()
           if [ -n "$previous" ]; then
             gh release download "$previous" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir previous
             since=(--previous "$previous" --previous-sums previous/SHA256SUMS)
           fi
-          python3 build/notes.py --tag "$GITHUB_REF_NAME" --repository "$GITHUB_REPOSITORY" "${since[@]}" \
+          python3 build/notes.py --tag "$TAG" --repository "$GITHUB_REPOSITORY" "${since[@]}" \
             release/SHA256SUMS > notes.md
           cat notes.md
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "$GITHUB_REF_NAME" --notes-file notes.md release/*
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$TAG" --notes-file notes.md release/*
 
   # The one check main's ruleset requires: it passes only when every job of the build passed. A package built
   # before (main's cache, an earlier run's artifact) skips its build step, not its job, which still succeeds;

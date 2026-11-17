@@ -79,9 +79,9 @@ definition: `pacman.conf`, `packages.lock` and the packages `packages.txt` takes
 repository. Adding one of the project's packages to `packages.txt` moves no other key. Each key is built once:
 a key built before comes from `main`'s cache or from the artifact an earlier run of this repository left under
 it (a pull request's, never a fork's), so a change builds only the packages it touches, once, on its pull
-request. A tag `YYYY.MM.DD` (or `YYYY.MM.DD.N`) publishes those builds as a release: every layer's packages
-and database, the copyleft packages' sources and `SHA256SUMS`. `main` changes only by pull request, and
-released tags never move or disappear (rulesets). The release's download folder is a pacman server for every layer:
+request. A release publishes those builds under a tag `YYYY.MM.DD` (or `YYYY.MM.DD.N`): every layer's packages
+and database, the copyleft packages' sources and `SHA256SUMS`. `main` changes only by pull request, only the
+release workflow creates release tags, and they never move or disappear (rulesets). The release's download folder is a pacman server for every layer:
 
 ```ini
 [overpressure-common]
@@ -95,11 +95,14 @@ every job before it passed; it is the check `main` requires.
 ### A release
 
 1. Merge the pull request; its CI built every package it changed.
-2. Tag the merged `main` commit with an annotated tag `YYYY.MM.DD` (a second one that day `YYYY.MM.DD.1`, ...),
-   whose message says what the release brings, and push the tag. The release job refuses a lightweight tag and
-   one that is not on `main`; it publishes the packages that the pull request built.
+2. Start the release: *Actions*, *Packages*, *Run workflow* on `main`, with one line on what it brings (in a
+   terminal: `gh workflow run packages.yml --ref main -f release="..."`). Anyone with write access may start one.
+   The run builds as a push does (reusing what the pull request built), then tags `main`'s commit with the next
+   free date (`YYYY.MM.DD`, a second one that day `YYYY.MM.DD.1`, ...) and that line and who started it as its
+   message, and publishes the release. If `main` moved while it ran, it stops before tagging: start it again.
 3. A consumer pins the release's tag, its commit and the SHA-256 of its `SHA256SUMS` (the PICO 4's:
-   `userspace/packages.json` in [overpressure/phoenix](https://github.com/overpressure/phoenix)).
+   `userspace/packages.json` in [overpressure/phoenix](https://github.com/overpressure/phoenix)). A release
+   changes no headset by itself: each moves its pin when it wants what the release brings.
 
 Releases are exact pins, so there are no preview or beta channels. A preview is a CI run's `packages` artifact
 (of `main` or a pull request), or a checkout of this repository built into an image (the PICO 4's
