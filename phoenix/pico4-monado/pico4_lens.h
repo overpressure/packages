@@ -31,7 +31,7 @@ struct pico4_lens
 {
 	double f;                    //!< Metres per tan-angle at the lens centre.
 	double k[PICO4_LENS_COEFFS]; //!< Polynomial in r².
-	double cx, cy;               //!< Lens centre on the panel, metres right and down of the panel centre.
+	double cx, cy;               //!< Lens centre on the panel, metres from its centre in compute_distortion's u and v.
 };
 
 struct pico4_lens_ca

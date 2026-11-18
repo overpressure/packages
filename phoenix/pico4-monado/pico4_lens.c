@@ -53,13 +53,20 @@ pico4_lens_parse_optical(const char *json_text, struct pico4_lens out_lenses[2])
 			snprintf(name, sizeof(name), "A%d", i);
 			ok = get_number(p, name, &l.k[i]);
 		}
-		// Optional: optical centre in mm (stock uses it as the lens centre offset).
+		/*
+		 * Optional: the lens centre's offset in mm. The stock compositor's distortion mesh
+		 * (libpxrcompositor.so) puts the lens centre at -centerx, +centery from the eye's panel
+		 * centre. In compute_distortion's panel coordinates that is cx = -centerx, cy = +centery:
+		 * worn, a lens centre moved 2 mm along centerx or centery moves that eye's picture the
+		 * way stock's would only with these signs. Headsets differ by up to a few tenths of a
+		 * millimetre between the eyes, which the wrong signs doubled into eye strain.
+		 */
 		double mm;
 		if (get_number(cJSON_GetObjectItemCaseSensitive(center, "centerx"), eyes[e], &mm)) {
-			l.cx = mm * 0.001;
+			l.cx = -mm * 0.001;
 		}
 		if (get_number(cJSON_GetObjectItemCaseSensitive(center, "centery"), eyes[e], &mm)) {
-			l.cy = -mm * 0.001;
+			l.cy = mm * 0.001;
 		}
 		out_lenses[e] = l;
 	}
