@@ -141,6 +141,19 @@ deckard-arch-hotfixes-release-0.3/deckard-vulkan-layers-linux-aarch64
 deckard-arch-hotfixes-release-0.3/android-platform-tools
 which
 inotify-tools
+# The desktop, as on the Frame: Valve's steamdeck-kde-presets has steamos-nested-desktop, which runs
+# KDE Plasma nested in gamescope, its "Desktop" entry for Steam's + > Launch Program, "Return to Gaming
+# Mode" and Valve's Plasma defaults. Plasma is Holo's: the Frame's 6.2.5 needs its private base's Qt 6.8.
+# kdialog is the presets' dependency, Dolphin and Konsole the desktop's file manager and terminal.
+deckard-arch-hotfixes-release-0.3/steamdeck-kde-presets
+plasma-desktop
+plasma-workspace
+kwin
+breeze
+xdg-desktop-portal-kde
+kdialog
+dolphin
+konsole
 # "!name" satisfies dependencies on name without installing it:
 # pico4-session.service replaces sddm.
 !sddm

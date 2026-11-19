@@ -253,6 +253,12 @@ pkg() { pacman -Q "$1" 2>/dev/null | awk '{print $2}'; }
 for p in steamos-customizations-deckard steamos-manager gamescope pipewire deckard-mesa-linux-aarch64; do
 	need "package $p installed" pacman -Q "$p"
 done
+# The desktop, as on the Frame: Steam's + > Launch Program > Desktop runs steamos-nested-desktop, which
+# starts Plasma with its own kwin_wayland_wrapper nested in gamescope.
+need "desktop: Steam's Desktop entry" grep -qx 'X-Steam-Special=Desktop' /usr/share/applications/deckard-nested-desktop.desktop
+for program in steamos-nested-desktop startplasma-wayland kwin_wayland_wrapper; do
+	need "desktop: $program" [ -x "/usr/bin/$program" ]
+done
 os_id=$(. /etc/os-release && echo "${ID:-}")
 os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-}")
 
