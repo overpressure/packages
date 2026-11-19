@@ -4,7 +4,7 @@
   "category": "steamvr_input",
   "controller_type": "pico_controller",
   "name": "SteamVR dashboard bindings for the PICO 4 controllers",
-  "description": "Home (right) or menu (left): once toggles the dashboard, twice the room view (as the Frame's system button); the aim pose points, the trigger clicks, the grip goes back, the joystick scrolls.",
+  "description": "Home (right) or menu (left): once toggles the dashboard, twice the room view (as the Frame's system button); the aim pose points; each hand has the whole laser mouse, as Valve binds the Touch: the trigger clicks, the joystick click right-clicks, the grip middle-clicks, A or X goes home, B or Y back, the joystick scrolls.",
   "options": {},
   "simulated_actions": [],
   "alias_info": {},
@@ -84,22 +84,42 @@
         {
           "path": "/user/hand/left/input/grip",
           "mode": "button",
-          "inputs": {"click": {"output": "/actions/lasermouse/in/Back"}}
+          "inputs": {"click": {"output": "/actions/lasermouse/in/MiddleClick"}}
         },
         {
           "path": "/user/hand/right/input/grip",
           "mode": "button",
-          "inputs": {"click": {"output": "/actions/lasermouse/in/Back"}}
+          "inputs": {"click": {"output": "/actions/lasermouse/in/MiddleClick"}}
         },
         {
           "path": "/user/hand/left/input/joystick",
           "mode": "joystick",
-          "inputs": {"click": {"output": "/actions/lasermouse/in/MiddleClick"}}
+          "inputs": {"click": {"output": "/actions/lasermouse/in/RightClick"}}
         },
         {
           "path": "/user/hand/right/input/joystick",
           "mode": "joystick",
-          "inputs": {"click": {"output": "/actions/lasermouse/in/MiddleClick"}}
+          "inputs": {"click": {"output": "/actions/lasermouse/in/RightClick"}}
+        },
+        {
+          "path": "/user/hand/left/input/x",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/lasermouse/in/Home"}}
+        },
+        {
+          "path": "/user/hand/right/input/a",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/lasermouse/in/Home"}}
+        },
+        {
+          "path": "/user/hand/left/input/y",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/lasermouse/in/Back"}}
+        },
+        {
+          "path": "/user/hand/right/input/b",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/lasermouse/in/Back"}}
         }
       ]
     },
