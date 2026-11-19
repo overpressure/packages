@@ -1,8 +1,11 @@
-# gamescope as the Frame runs it (Valve's 3.16.28-1 is upstream's commit ea3579ed), with one
-# fix: its window manager added a window that reached the root twice (CreateNotify and then
-# ReparentNotify) as a second list entry, which kept the window's shared override surface after
+# gamescope as the Frame runs it (Valve's 3.16.28-1 is upstream's commit ea3579ed), with two
+# changes. A fix: its window manager added a window that reached the root twice (CreateNotify and
+# then ReparentNotify) as a second list entry, which kept the window's shared override surface after
 # the surface was freed and read it every vblank; a game starting (The Lab) reused the memory and
-# gamescope crashed, and the session with it. Built as upstream intends to be
+# gamescope crashed, and the session with it. And a window that is not Steam's (Steam's + > Launch
+# Program, the Desktop) gets the laser's click as the left button: on the Frame it gets a touch that
+# Valve's Xwayland turns into the pointer's click, which Holo's Xwayland does not (the Frame's needs
+# its private base's libei), so Plasma saw no clicks. Built as upstream intends to be
 # packaged: libliftoff, vkroots, wlroots and libdisplay-info from the submodules the commit pins,
 # linked statically, as in Valve's build; glm and stb from the commits their wraps name.
 # Valve's package also has steamos-session-shell, a helper outside upstream's tree that nothing
@@ -39,9 +42,21 @@ source=("gamescope::git+https://github.com/ValveSoftware/gamescope.git#commit=$_
         "glm::git+https://github.com/g-truc/glm.git#commit=$_glm"
         "stb::git+https://github.com/nothings/stb.git#commit=$_stb"
         "wayland-protocols::git+https://gitlab.freedesktop.org/wayland/wayland-protocols.git#commit=$_wayland_protocols"
-        gamescope-add-win-once.patch)
-sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
-            SKIP '606f1c30b484de48b101508d6858f77660d5528316b1ae3a06cb2380fae300ff')
+        gamescope-add-win-once.patch
+        gamescope-non-steam-window-click.patch)
+sha256sums=(SKIP
+            SKIP
+            SKIP
+            SKIP
+            SKIP
+            SKIP
+            SKIP
+            SKIP
+            SKIP
+            SKIP
+            SKIP
+            '606f1c30b484de48b101508d6858f77660d5528316b1ae3a06cb2380fae300ff'
+            'b4640c6070521a03188bd3e0f60d8f7a021aa097589baf3b9f420f559156baea')
 
 prepare() {
   cd gamescope
@@ -62,6 +77,7 @@ prepare() {
   rm -rf subprojects/wayland-protocols
   cp -a "$srcdir/wayland-protocols" subprojects/wayland-protocols
   patch -p1 < "$srcdir/gamescope-add-win-once.patch"
+  patch -p1 < "$srcdir/gamescope-non-steam-window-click.patch"
 }
 
 build() {

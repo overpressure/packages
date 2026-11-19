@@ -34,7 +34,8 @@ deckard-arch-hotfixes-release-0.3/bluez-utils
 upower
 
 # Session, audio and graphics stack of the Frame. gamescope is the Frame's version
-# built here with a fix for a crash when a game starts (overpressure-gamescope).
+# built here with a fix for a crash when a game starts and the laser's click as the left button
+# for windows that are not Steam's, which Holo's Xwayland needs (overpressure-gamescope).
 overpressure-common/overpressure-gamescope
 libxxf86vm
 deckard-arch-hotfixes-release-0.3/deckard-mesa-linux-aarch64

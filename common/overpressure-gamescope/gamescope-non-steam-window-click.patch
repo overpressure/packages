@@ -1,0 +1,20 @@
+diff --git a/src/Backends/OpenVRBackend.cpp b/src/Backends/OpenVRBackend.cpp
+index 9366a04..1d1b76a 100644
+--- a/src/Backends/OpenVRBackend.cpp
++++ b/src/Backends/OpenVRBackend.cpp
+@@ -883,9 +883,14 @@ namespace gamescope
+                     return TouchClickModes::Left;
+                 }
+ 
++                // A window that is not Steam's gets the laser's click as the left button, as game windows
++                // do below. On the Frame it gets a touch, which Valve's Xwayland turns into the pointer's
++                // click while the root's _STEAMOS_TOUCH_POINTER_EMULATION is set (steamcompmgr sets it for
++                // such a window); other Xwaylands deliver the bare touch, which most X11 programs ignore
++                // (kwin's nested X11 backend, and with it Plasma, among them).
+                 if ( VirtualConnectorKeyIsNonSteamWindow( pMouseConnector->GetVirtualConnectorKey() ) )
+                 {
+-                    return TouchClickModes::Passthrough;
++                    return TouchClickModes::Left;
+                 }
+ 
+                 // HACK HACK(autumna): Steam is not setting the steam touch click mode atom
