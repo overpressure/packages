@@ -45,6 +45,8 @@ source=(pico4-session
         kthread-priorities
         monado-service
         session
+        session-switch
+        session-target
         steam-language
         steam-proton-mapping
         steamvr-ended
@@ -73,13 +75,13 @@ sha256sums=('6dd8cda751033318aca350f3dbbed8a29860431777488b4acc042e8f1b9572b3'
             '2026a0992189880658e73695f064c625106bd24fbe3b60b84dd6344c79dbed7b'
             '6a4d221660ccd634aff1489af9e4a907e7d7634e21d12480c61dfd8d69a47c27'
             '47e076f445ff23f3e298827305df1d4ae9289db72cc3df322b3f84d1084e425b'
-            '96c341eddba0622f19b078a81a4febe960e45d3ea5e0eed86891221a9176a5ec'
+            '2dd7b0906ad06ec7ed6062a1c8922b6eb7d9c94e68b976fb363df8d847318d9b'
             '602007dd743608f512f32c065ac862bb67ebf572a495943f2e28c878887b59ed'
             '26315b666d39b0b0bd45fa111125372b6a4f960d7d9e878e4c6d0e2344a5914b'
             '583c4cda65039cda59b4a1c1f8a502dcccfaa439c610190c3ffc732d63bf9e75'
             '6251d03b432537997d267edb1a63943e8d7dcee567bbe1efd17e131867b08afd'
             '08c94b2d813787262e686bd4b04113b536292bbda6a61332fded3227e03ae5f1'
-            '6a27facb78cf11b3ada2d88efc340c1114b4747a76a93782ca41db50b3af848f'
+            '4978ae339056fd80174a56b152e0a986967e21a2c0b3c559ee87d016cf89b93f'
             '552df4f4973a5f2f336b1705f9aa678e270c20b211a31bad0f56ab5fd28b40c7'
             '0a03ed543c526dd4fed3b3354e381895fdb262c1f1da023a27371d752246304b'
             '964f3cd570156b50409418e15e55ddd40837d4f2aa6577ad1c79c3eb571da35a'
@@ -89,10 +91,12 @@ sha256sums=('6dd8cda751033318aca350f3dbbed8a29860431777488b4acc042e8f1b9572b3'
             'c6b8afb5512eefc540c194e288a21214153a470cc7e4e7053526da0ee63ce744'
             'dc79f563ac46c680ff26a52d01a97ac3e1fb47c748ab52e52465316f9fb105de'
             '558048fb79304748a7fb83bf8c57dab7514e95dd746edf6e163b8fbae22e5722'
-            'fe2b6c43191914059fdce77beaef130d6cb10b192094b1fcb81bef7c956b4579'
+            '014822636025672f49994474db118134d49b8c807df577992e30132f4442cb9a'
+            '7bac841b0850b271fc50711ab7bdb04bf29f679af5a877795ec61149e7c7a156'
+            'eb73a4a72c3b3559e0ec323739773343254bcfc78369871833a9136f02d67858'
             '76ef95a4f1ebb629b04d8d5df882e681f15ab2ad11f19941c50fe4c79c5dddeb'
             'cb5395cf33923315d8e3e7ab562e43fb144169dab5d676528b6d2cc127bc1ab5'
-            '9c45806949ab66765b9bf48070616e5aa4ad23613e15ffa2e56cfe663aac7b20'
+            '1e781ed5da2cded1a92e0e1d5d557e4da929b4aeddad829f9248e81a57bf5177'
             'aba5b1ad42e2b45361de4db3d5f4adfe590027b590dfc3979c3f1f54b4e1410f'
             '4b4e905dec0723375b9af255225a1c8417fc633314807851cf7edb4d853b317e'
             '54fcd4dd29bd83a5fed18e801014343764d9121caf9379fe5f058301110cb984'
@@ -101,7 +105,7 @@ sha256sums=('6dd8cda751033318aca350f3dbbed8a29860431777488b4acc042e8f1b9572b3'
             '93975c1d0aadb1c988c8b85c15ec7b3df3e4319f232058ab12b1fe0409aab945'
             '5d9ff1a34c566235fc9096add9df814e45f7fcc04f21595bbdeec5d6176119f4'
             '7b6ddf3bab19be7597adb3d50c478b5ee0b86b34fbef504fedf5a0c4d9902c01'
-            'f8a71d6a37e5ea11c89091b5cd01bb343c053f985331c76e38477ce4c58f17a1'
+            '6fe6325e5e4eb5979f75e10925941a038a3b086ad363d913f87dc4adccdf043e'
             '6d82af321ff0d4987f0c8e58f02b8d0bce90904b9e53c6d7321d478bfeac805f'
             '6ec565db07ed8b08cdfac49afada3f319a4c010c225635fb6062c6f5310f3883'
             '0d023d0e215d653db55842eb38a033a453560899385a774bea4edf6c11f5ae2e'
@@ -141,6 +145,8 @@ package() {
   install -Dm755 kthread-priorities "$pkgdir/usr/libexec/pico4/kthread-priorities"
   install -Dm755 monado-service "$pkgdir/usr/libexec/pico4/monado-service"
   install -Dm755 session "$pkgdir/usr/libexec/pico4/session"
+  install -Dm755 session-switch "$pkgdir/usr/libexec/pico4/session-switch"
+  install -Dm755 session-target "$pkgdir/usr/libexec/pico4/session-target"
   install -Dm755 steam-language "$pkgdir/usr/libexec/pico4/steam-language"
   install -Dm755 steam-proton-mapping "$pkgdir/usr/libexec/pico4/steam-proton-mapping"
   install -Dm755 steamvr-ended "$pkgdir/usr/libexec/pico4/steamvr-ended"

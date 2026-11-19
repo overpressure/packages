@@ -1,0 +1,37 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# pico4-session.service's root steps around each session (docs/session.md#the-desktop), as sddm does them on
+# the Frame:
+#   session-switch start   at the first start of a boot, remove a one-shot login left from before it (sddm's
+#                          reset-oneshot-boot.conf); then record the target this session starts
+#   session-switch stop    a session that ended because the next one starts another target (Steam's Switch
+#                          to Desktop, Return to Gaming Mode) was switched, not a crash: it does not count
+#                          against the session's start limit
+# PICO4_SESSION_ROOT (tests) is the root the files are written below; PICO4_SYSTEMCTL replaces systemctl.
+set -euo pipefail
+root=${PICO4_SESSION_ROOT:-}
+state=$root/run/pico4
+running=$state/session-target
+target() { PICO4_SESSION_ROOT=$root "${PICO4_SESSION_TARGET_CMD:-/usr/libexec/pico4/session-target}"; }
+
+case "${1:-}" in
+start)
+	mkdir -p "$state"
+	if [ ! -e "$state/session-booted" ]; then
+		rm -f "$root/etc/sddm.conf.d/zzt-steamos-temp-login.conf" "$root/etc/sddm.conf.d/zzt-holo-temp-login.conf"
+		: > "$state/session-booted"
+	fi
+	target > "$running"
+	;;
+stop)
+	[ -s "$running" ] || exit 0
+	if [ "$(target)" != "$(cat "$running")" ]; then
+		echo "the next session starts $(target): a switch, not counted against the start limit"
+		"${PICO4_SYSTEMCTL:-systemctl}" reset-failed pico4-session.service
+	fi
+	;;
+*)
+	echo "usage: $0 start|stop" >&2
+	exit 2
+	;;
+esac

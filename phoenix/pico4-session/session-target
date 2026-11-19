@@ -1,0 +1,53 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# Print the session target pico4-session starts (docs/session.md#the-desktop): PICO4_SESSION_TARGET when
+# it or /etc/pico4/session.conf names one; else the one sddm's autologin starts on the Frame. That is
+# [Autologin] Session= from sddm's configuration, read as sddm reads it (/usr/lib/sddm/sddm.conf.d/*.conf,
+# then /etc/sddm.conf.d/*.conf, then /etc/sddm.conf; a later setting wins), whose wayland-sessions entry runs
+# "start-gamescope-session TARGET". steamos-manager writes it for Steam's Switch to Desktop (a one-shot
+# zzt-steamos-temp-login.conf) and its default login mode (zz-steamos-autologin.conf).
+# PICO4_SESSION_ROOT (tests) is the root the files are read below.
+set -euo pipefail
+export LC_ALL=C
+root=${PICO4_SESSION_ROOT:-}
+default=gamescope-session.target
+
+if [ -z "${PICO4_SESSION_TARGET:-}" ] && [ -s "$root/etc/pico4/session.conf" ]; then
+	PICO4_SESSION_TARGET=$(sed -n 's/^PICO4_SESSION_TARGET=//p' "$root/etc/pico4/session.conf" | tail -n 1)
+fi
+if [ -n "${PICO4_SESSION_TARGET:-}" ]; then
+	echo "$PICO4_SESSION_TARGET"
+	exit 0
+fi
+
+files=()
+for dir in "$root/usr/lib/sddm/sddm.conf.d" "$root/etc/sddm.conf.d"; do
+	for f in "$dir"/*.conf; do
+		[ ! -f "$f" ] || files+=("$f")
+	done
+done
+[ ! -f "$root/etc/sddm.conf" ] || files+=("$root/etc/sddm.conf")
+session=""
+if [ ${#files[@]} -gt 0 ]; then
+	session=$(awk '
+		/^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section); next }
+		section == "[Autologin]" && /^[[:space:]]*Session[[:space:]]*=/ {
+			value = $0; sub(/^[^=]*=[[:space:]]*/, "", value); sub(/[[:space:]]+$/, "", value); last = value
+		}
+		END { print last }' "${files[@]}")
+fi
+[ -n "$session" ] || { echo "$default"; exit 0; }
+
+entry=$root/usr/share/wayland-sessions/${session%.desktop}.desktop
+target=""
+[ ! -f "$entry" ] || target=$(awk -F= '
+	/^Exec=/ {
+		n = split(substr($0, 6), word, /[[:space:]]+/)
+		if (n == 2 && word[1] ~ /(^|\/)start-gamescope-session$/ && word[2] ~ /\.target$/) print word[2]
+		exit
+	}' "$entry")
+if [ -z "$target" ]; then
+	echo "sddm's autologin session $session starts no Valve session target: $default" >&2
+	target=$default
+fi
+echo "$target"

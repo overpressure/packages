@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Unlicense
 # The steamos user's session (docs/session.md). pico4-session.service runs this
 # inside a logind session; the user manager starts Valve's session target
-# (deckard-steamvr-session), gamescope-session.target unless session.conf names another:
-# SteamVR with driver_monado, gamescope on SteamVR's OpenVR overlays.
+# (deckard-steamvr-session): SteamVR with driver_monado, gamescope on SteamVR's OpenVR overlays, with
+# Steam (gamescope-session.target) or Plasma (plasma-session.target). The target is the one session-switch
+# recorded (session-target: session.conf's, else sddm's autologin's, as on the Frame).
 set -euo pipefail
 runtime=${XDG_RUNTIME_DIR:?not inside a logind session}
-target=${PICO4_SESSION_TARGET:-gamescope-session.target}
+target=$(cat /run/pico4/session-target 2>/dev/null || /usr/libexec/pico4/session-target)
 [ -x /usr/bin/start-gamescope-session ] || { echo "deckard-steamvr-session is not installed" >&2; exit 1; }
 
 # logind starts the user manager with the session; wait until it listens.

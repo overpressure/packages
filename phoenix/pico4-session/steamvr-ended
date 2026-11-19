@@ -7,4 +7,5 @@
 # pico4-session.service starts all of it again (docs/session.md).
 job=$(systemctl --user show steamvr.service -p Job --value)
 [ -n "$job" ] && [ "$job" != 0 ] && exit 0
-exec systemctl --user --no-block stop gamescope-session.target
+# The session's target, Steam's or Plasma's: start-gamescope-session puts it into the user manager's environment.
+exec systemctl --user --no-block stop "${GAMESCOPE_SESSION_TARGET:-gamescope-session.target}"

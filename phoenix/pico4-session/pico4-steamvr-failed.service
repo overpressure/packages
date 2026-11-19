@@ -1,5 +1,6 @@
 # SteamVR failed for good (its start limit, see steamvr.service.d): end Valve's session
-# target, or gamescope would stay without SteamVR and the lenses dark. Its
+# target, Steam's or Plasma's (start-gamescope-session puts it into the user manager's
+# environment), or gamescope would stay without SteamVR and the lenses dark. Its
 # start-gamescope-session returns, and pico4-session.service starts a new session
 # (within its own start limit), which resets SteamVR's counter (docs/session.md).
 [Unit]
@@ -7,4 +8,4 @@ Description=End the session after SteamVR failed
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/systemctl --user stop gamescope-session.target
+ExecStart=/bin/sh -c 'exec /usr/bin/systemctl --user stop "$${GAMESCOPE_SESSION_TARGET:-gamescope-session.target}"'

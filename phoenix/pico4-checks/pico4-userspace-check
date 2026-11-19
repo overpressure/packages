@@ -136,9 +136,10 @@ need "USB link up ($link_status)" [ "$link_status" = up ]
 # Valve's session target; the target takes a moment after the system is up. The
 # Monado service (a development runtime, not part of the session) is only reported.
 session_user=steamos
-session_target=gamescope-session.target
-[ ! -s /etc/pico4/session.conf ] || . /etc/pico4/session.conf
-[ -z "${PICO4_SESSION_TARGET:-}" ] || session_target=$PICO4_SESSION_TARGET
+# The target the session started (pico4-session's session-switch records it: Steam's or the desktop's), else
+# the one it starts.
+session_target=$(cat /run/pico4/session-target 2>/dev/null || /usr/libexec/pico4/session-target 2>/dev/null)
+[ -n "$session_target" ] || session_target=gamescope-session.target
 session_uid=$(id -u "$session_user" 2>/dev/null)
 user_systemctl() { # the session user's own manager
 	runuser -u "$session_user" -- env "XDG_RUNTIME_DIR=/run/user/$session_uid" 		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$session_uid/bus" systemctl --user "$@"

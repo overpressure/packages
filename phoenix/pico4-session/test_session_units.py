@@ -95,5 +95,150 @@ class KthreadPrioritiesTest(unittest.TestCase):
             self.assertEqual((workqueues / "dsi_drm_work_1/prio").read_text().strip(), "90")
 
 
+#: Valve's session entries (deckard-steamvr-session) and sddm's settings, laid out as the Frame's image has them:
+#: /usr/lib's names Plasma, /etc's (read later) Valve's game session.
+VALVE_SESSIONS = {
+    "usr/share/wayland-sessions/gamescope-wayland.desktop": "[Desktop Entry]\n"
+    "Exec=start-gamescope-session gamescope-session.target\n",
+    "usr/share/wayland-sessions/plasma.desktop": "[Desktop Entry]\n"
+    "Exec=start-gamescope-session plasma-session.target\n",
+    "usr/lib/sddm/sddm.conf.d/steamos.conf": "[Theme]\nCurrent=breeze\n\n[Autologin]\nSession=plasma.desktop\n",
+    "etc/sddm.conf.d/steamos.conf": "[General]\nDisplayServer=wayland\n\n[Autologin]\nRelogin=true\n"
+    "Session=gamescope-wayland.desktop\n",
+}
+TEMP_LOGIN = "etc/sddm.conf.d/zzt-steamos-temp-login.conf"
+
+
+def run_script(name: str, root: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+    """Run one of the recipe's scripts under bash with PICO4_SESSION_ROOT=root."""
+    environ = dict(os.environ, PICO4_SESSION_ROOT=root.as_posix(), **env)
+    environ.pop("PICO4_SESSION_TARGET", None)
+    environ.update(env)
+    return subprocess.run(  # noqa: S603  # the recipe's script under bash, no shell
+        ["bash", str(HERE / name), *args],  # noqa: S607  # bash from PATH
+        env=environ,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def make_root(tmp: str, files: dict[str, str]) -> Path:
+    """Write a root with @p files below @p tmp."""
+    root = Path(tmp)
+    for path, text in files.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text(text, encoding="utf-8", newline="\n")
+    return root
+
+
+class SessionTargetTest(unittest.TestCase):
+    """session-target: session.conf's target, else the one sddm's autologin starts on the Frame."""
+
+    def target(self, files: dict[str, str], **env: str) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            r = run_script("session-target", make_root(tmp, files), **env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return r.stdout.strip()
+
+    def test_game_mode_by_default(self):
+        # /etc's steamos.conf comes after /usr/lib's and names Valve's game session.
+        self.assertEqual(self.target(VALVE_SESSIONS), "gamescope-session.target")
+
+    def test_switch_to_desktop(self):
+        # steamos-manager's one-shot login for Steam's Switch to Desktop.
+        files = {**VALVE_SESSIONS, TEMP_LOGIN: "[Autologin]\nSession=plasma.desktop\n"}
+        self.assertEqual(self.target(files), "plasma-session.target")
+
+    def test_desktop_as_the_default_login_mode(self):
+        files = {**VALVE_SESSIONS, "etc/sddm.conf.d/zz-steamos-autologin.conf": "[Autologin]\nSession=plasma\n"}
+        self.assertEqual(self.target(files), "plasma-session.target")
+
+    def test_session_conf_wins(self):
+        files = {
+            **VALVE_SESSIONS,
+            TEMP_LOGIN: "[Autologin]\nSession=plasma.desktop\n",
+            "etc/pico4/session.conf": "PICO4_SESSION_TARGET=gamescope-session.target\n",
+        }
+        self.assertEqual(self.target(files), "gamescope-session.target")
+        self.assertEqual(
+            self.target(VALVE_SESSIONS, PICO4_SESSION_TARGET="plasma-session.target"), "plasma-session.target"
+        )
+
+    def test_other_sections_and_sessions(self):
+        # A Session= outside [Autologin] does not count; a session that is not Valve's falls back.
+        files = {**VALVE_SESSIONS, "etc/sddm.conf.d/zz-other.conf": "[X11]\nSession=plasma.desktop\n"}
+        self.assertEqual(self.target(files), "gamescope-session.target")
+        files = {
+            **VALVE_SESSIONS,
+            "usr/share/wayland-sessions/other.desktop": "[Desktop Entry]\nExec=/usr/bin/startplasma-wayland\n",
+            TEMP_LOGIN: "[Autologin]\nSession=other.desktop\n",
+        }
+        self.assertEqual(self.target(files), "gamescope-session.target")
+        self.assertEqual(self.target({}), "gamescope-session.target")
+
+
+class SessionSwitchTest(unittest.TestCase):
+    """session-switch: sddm's boot-time one-shot reset, and switches outside the session's start limit."""
+
+    def switch(self, root: Path, step: str) -> subprocess.CompletedProcess[str]:
+        log = root / "systemctl.log"
+        fake = root / "systemctl"
+        fake.write_text(f'#!/bin/sh\necho "$*" >> "{log.as_posix()}"\n', encoding="utf-8", newline="\n")
+        fake.chmod(0o755)
+        r = run_script(
+            "session-switch",
+            root,
+            step,
+            PICO4_SESSION_TARGET_CMD=(HERE / "session-target").as_posix(),
+            PICO4_SYSTEMCTL=fake.as_posix(),
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r
+
+    @staticmethod
+    def resets(root: Path) -> list[str]:
+        log = root / "systemctl.log"
+        return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+    def test_first_start_of_a_boot_drops_a_stale_one_shot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_root(tmp, {**VALVE_SESSIONS, TEMP_LOGIN: "[Autologin]\nSession=plasma.desktop\n"})
+            self.switch(root, "start")
+            self.assertFalse((root / TEMP_LOGIN).exists())
+            self.assertEqual((root / "run/pico4/session-target").read_text().strip(), "gamescope-session.target")
+
+    def test_switch_within_a_boot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_root(tmp, VALVE_SESSIONS)
+            self.switch(root, "start")
+            # Steam's Switch to Desktop: the one-shot login, then the session ends.
+            (root / TEMP_LOGIN).write_text("[Autologin]\nSession=plasma.desktop\n", encoding="utf-8")
+            self.switch(root, "stop")
+            self.assertEqual(self.resets(root), ["reset-failed pico4-session.service"])
+            # The next start keeps it: only the first start of a boot drops it.
+            self.switch(root, "start")
+            self.assertTrue((root / TEMP_LOGIN).exists())
+            self.assertEqual((root / "run/pico4/session-target").read_text().strip(), "plasma-session.target")
+
+    def test_a_session_that_ends_by_itself_counts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_root(tmp, VALVE_SESSIONS)
+            self.switch(root, "start")
+            self.switch(root, "stop")
+            self.assertEqual(self.resets(root), [])
+
+
+class SessionTargetUsersTest(unittest.TestCase):
+    def test_the_session_ends_the_target_that_runs(self):
+        # SteamVR's end and its start limit stop the running target, Steam's or Plasma's.
+        for name in ("steamvr-ended", "pico4-steamvr-failed.service"):
+            text = (HERE / name).read_text(encoding="utf-8")
+            self.assertIn("GAMESCOPE_SESSION_TARGET:-gamescope-session.target}", text, name)
+        service = unit("pico4-session.service")["Service"]
+        self.assertEqual(service["ExecStartPre"], "+/usr/libexec/pico4/session-switch start")
+        self.assertEqual(service["ExecStopPost"], "+/usr/libexec/pico4/session-switch stop")
+
+
 if __name__ == "__main__":
     unittest.main()
