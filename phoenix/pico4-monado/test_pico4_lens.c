@@ -58,8 +58,8 @@ main(void)
 
 	EXPECT(pico4_lens_parse_optical(optical, lens));
 	EXPECT(NEAR(lens[0].f, 0.025) && NEAR(lens[0].k[1], 0.5) && NEAR(lens[1].k[0], 1));
-	// The stock compositor's signs: -centerx, +centery.
-	EXPECT(NEAR(lens[0].cx, -0.0005) && NEAR(lens[1].cy, -0.00025));
+	// The stock compositor's directions in panel coordinates (x right, y down): -centerx, -centery.
+	EXPECT(NEAR(lens[0].cx, -0.0005) && NEAR(lens[1].cy, 0.00025));
 	EXPECT(!pico4_lens_parse_optical("{\"distortion_parameter\": {\"left\": {\"F\": \"0.02\"}}}", lens) &&
 	       pico4_lens_parse_optical(optical, lens));
 	EXPECT(pico4_lens_parse_ca(config, &ca));
@@ -72,7 +72,7 @@ main(void)
 	// Right eye: identity polynomial, so green = (x - cx) / F; red and blue scaled by 1.01 and 0.98.
 	double t[3][2];
 	EXPECT(pico4_lens_tan(&lens[1], &ca, 0.01, 0.002, t));
-	EXPECT(NEAR(t[1][0], 0.4) && NEAR(t[1][1], (0.002 + 0.00025) / 0.025));
+	EXPECT(NEAR(t[1][0], 0.4) && NEAR(t[1][1], (0.002 - 0.00025) / 0.025));
 	EXPECT(NEAR(t[0][0], 0.4 * 1.01) && NEAR(t[2][0], 0.4 * 0.98));
 
 	// The panel corner is outside the circle the polynomial was fitted for.
@@ -101,11 +101,12 @@ main(void)
 	EXPECT(pico4_lens_inverse(&lens[1], &ca, 1, tan(85 * M_PI / 180), 0, &ix, &iy) && ix > 0.2);
 	EXPECT(!pico4_lens_inverse(&lens[1], &ca, 3, 0, 0, &ix, &iy));
 
-	// Field of view of the identity lens: atan(0.023 / 0.025) to each side, shifted by the centre offset.
+	// Field of view of the identity lens: atan(0.023 / 0.025) to each side, symmetric despite the
+	// right lens centre's offset, as stock's.
 	double l, r, u, d;
 	pico4_lens_fov(&lens[1], &l, &r, &u, &d);
 	EXPECT(NEAR(l, -atan(0.023 / 0.025)) && NEAR(r, atan(0.023 / 0.025)));
-	EXPECT(NEAR(u, atan((0.023 - 0.00025) / 0.025)) && NEAR(d, -atan((0.023 + 0.00025) / 0.025)));
+	EXPECT(NEAR(u, atan(0.023 / 0.025)) && NEAR(d, -atan(0.023 / 0.025)));
 
 	// The only MCU request: A0 08 00 00 00 with its XOR checksum.
 	EXPECT(pico4_ipd_get_position[0] == 0xA0 && pico4_ipd_get_position[1] == 0x08 &&

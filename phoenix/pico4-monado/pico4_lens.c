@@ -55,18 +55,17 @@ pico4_lens_parse_optical(const char *json_text, struct pico4_lens out_lenses[2])
 		}
 		/*
 		 * Optional: the lens centre's offset in mm. The stock compositor's distortion mesh
-		 * (libpxrcompositor.so) puts the lens centre at -centerx, +centery from the eye's panel
-		 * centre. In compute_distortion's panel coordinates that is cx = -centerx, cy = +centery:
-		 * worn, a lens centre moved 2 mm along centerx or centery moves that eye's picture the
-		 * way stock's would only with these signs. Headsets differ by up to a few tenths of a
-		 * millimetre between the eyes, which the wrong signs doubled into eye strain.
+		 * (libpxrcompositor.so) moves the lens centre to the wearer's left as centerx grows and
+		 * up as centery grows, in both eyes, by 1 mm per mm. In compute_distortion's panel
+		 * coordinates (x right, y down) that is cx = -centerx, cy = -centery. The offset moves
+		 * only the lens model, as in stock: the field of view stays symmetric (pico4_lens_fov).
 		 */
 		double mm;
 		if (get_number(cJSON_GetObjectItemCaseSensitive(center, "centerx"), eyes[e], &mm)) {
 			l.cx = -mm * 0.001;
 		}
 		if (get_number(cJSON_GetObjectItemCaseSensitive(center, "centery"), eyes[e], &mm)) {
-			l.cy = mm * 0.001;
+			l.cy = -mm * 0.001;
 		}
 		out_lenses[e] = l;
 	}
@@ -204,9 +203,15 @@ edge_tan(const struct pico4_lens *lens, double d)
 void
 pico4_lens_fov(const struct pico4_lens *lens, double *out_left, double *out_right, double *out_up, double *out_down)
 {
-	double half = PICO4_LENS_EYE_M / 2;
-	*out_left = -atan(edge_tan(lens, half + lens->cx));
-	*out_right = atan(edge_tan(lens, half - lens->cx));
-	*out_up = atan(edge_tan(lens, half + lens->cy));
-	*out_down = -atan(edge_tan(lens, half - lens->cy));
+	/*
+	 * Symmetric, from the panel centre, whatever the lens centre's offset: stock renders each
+	 * eye with one symmetric frustum and moves the lens centre only in its distortion mesh. On
+	 * SteamVR an asymmetric vertical field of view moved the picture by its asymmetry, several
+	 * times the offset itself (2 mm: 470 px instead of 94 on the panel).
+	 */
+	double a = atan(edge_tan(lens, PICO4_LENS_EYE_M / 2));
+	*out_left = -a;
+	*out_right = a;
+	*out_up = a;
+	*out_down = -a;
 }

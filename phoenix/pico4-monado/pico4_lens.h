@@ -83,8 +83,9 @@ pico4_lens_inverse(const struct pico4_lens *lens,
                    double *out_y);
 
 /*!
- * Field of view of one eye in radians, from the panel edges through the green
- * channel: left and down negative, as in xrt_fov.
+ * Field of view of one eye in radians, from the panel centre to its edges through
+ * the green channel, symmetric whatever the lens centre's offset (as stock's):
+ * left and down negative, as in xrt_fov.
  */
 void
 pico4_lens_fov(const struct pico4_lens *lens,
