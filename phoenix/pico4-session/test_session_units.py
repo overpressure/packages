@@ -186,11 +186,15 @@ class SessionSwitchTest(unittest.TestCase):
         fake = root / "systemctl"
         fake.write_text(f'#!/bin/sh\necho "$*" >> "{log.as_posix()}"\n', encoding="utf-8", newline="\n")
         fake.chmod(0o755)
+        # The recipe's scripts are not executable in a checkout; the package installs them so.
+        target = root / "session-target"
+        target.write_bytes((HERE / "session-target").read_bytes())
+        target.chmod(0o755)
         r = run_script(
             "session-switch",
             root,
             step,
-            PICO4_SESSION_TARGET_CMD=(HERE / "session-target").as_posix(),
+            PICO4_SESSION_TARGET_CMD=target.as_posix(),
             PICO4_SYSTEMCTL=fake.as_posix(),
         )
         self.assertEqual(r.returncode, 0, r.stderr)
