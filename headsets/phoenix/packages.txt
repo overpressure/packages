@@ -19,6 +19,8 @@ zstd
 # SteamOS integration as on the Steam Frame
 deckard-arch-hotfixes-release-0.3/steamos-customizations-deckard
 deckard-arch-hotfixes-release-0.3/steamos-manager
+# Steam's Developer > Set user password runs it: it hands the new password to passwd as the session user
+deckard-arch-hotfixes-release-0.3/steamos-passwd
 # The Frame's swap: zram at half the RAM through zram-generator (PICO OS swaps to zram
 # the same way)
 deckard-arch-hotfixes-release-0.3/holo-zram-swap

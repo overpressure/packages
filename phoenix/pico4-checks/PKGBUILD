@@ -3,7 +3,7 @@
 # reads), the suspend check, the support bundle and the link's samples after
 # boot. The preset enables the link samples; the tests run in the build.
 pkgname=pico4-checks
-pkgver=2026.11.22
+pkgver=2026.11.23
 pkgrel=1
 pkgdesc="PICO 4 checks: the system's and the VR session's acceptance checks, the support bundle"
 arch=(any)
@@ -25,7 +25,7 @@ source=(pico4-support-bundle
         test_suspend_check.py)
 sha256sums=('83c000aeb2f6834844c79b5dbac32b76f866f0431461bf89b92415eaff29f8b6'
             '49ee620087f9d92b65a98a664850338b4ff875821c849017a186e74da316fdcf'
-            '39d55d0cf6ecaa026f8502c5b2b2d47af4d94eb823e47829f9c3dde11244a1e3'
+            '0dbd569450e98e51711353d1b81106b65de68716951326cf1b7b6b7008840a36'
             'ad8b81ada874a1121e0a07d5d225af84ef0b57adbd63d17c632ecfd126915a48'
             '217d4d3db717e8cdb576035d0624b1572ea02eb2152dfe04b26ce51e49ed73f7'
             'a48b847f2a7993d3b369f540746687760600ddf91ead6d0c0f3144856bed9492'

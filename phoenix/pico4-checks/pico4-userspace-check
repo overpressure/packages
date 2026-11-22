@@ -270,9 +270,16 @@ for setting in "passwordauthentication no" "permitemptypasswords no" "kbdinterac
 done
 # OpenSSH 10 prints prohibit-password, older versions its synonym without-password.
 need "sshd: permitrootlogin prohibit-password" grep -qxE "permitrootlogin (prohibit|without)-password" <<<"$sshd_settings"
-for account in root steamos; do
-	need "no password on $account" [ "$(getent shadow "$account" | cut -d: -f2)" = '*' ]
-done
+need "no password on root" [ "$(getent shadow root | cut -d: -f2)" = '*' ]
+# The session user has none until its owner sets one (empty, as on SteamOS), then a hash; an empty one
+# authenticates nothing, and sudo takes the owner's (docs/security.md).
+session_password=$(getent shadow "$session_user" | cut -d: -f2)
+need "$session_user: no password, or its owner's" grep -qE '^(\$.+)?$' <<<"$session_password"
+need "system-auth: pam_unix authenticates" grep -qE '^auth[[:space:]].*pam_unix\.so' /etc/pam.d/system-auth
+need "system-auth: no empty password authenticates" \
+	bash -c '! grep -qE "^auth[[:space:]].*pam_unix\.so.*[[:space:]]nullok([[:space:]]|$)" /etc/pam.d/system-auth'
+need "sudo: wheel with its own password" grep -qx '%wheel ALL=(ALL:ALL) ALL' /etc/sudoers.d/10-pico4-wheel
+need "steamos-passwd: Steam's Set user password" [ -x /usr/bin/steamos-passwd ]
 need "no unexpected network listener: $(pico4-listeners 2>/dev/null | grep -c UNEXPECTED)" pico4-listeners
 
 # -- Vulkan through Turnip (needs the GPU firmware from the stock firmware) ----

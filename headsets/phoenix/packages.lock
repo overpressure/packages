@@ -599,6 +599,7 @@ be1e6227a83113fab6a8260d207122d1b27d207e66bed066bf0f3bea6b11b0e3  sqlite-3.51.0-
 8773b343ab29a09ae7bfdb42094e1db364ea0645f05e011c77d4fbb0051e8e53  steamdeck-kde-presets-3.8.3-7-any.pkg.tar.zst
 dd7266e324be56f7161e24c3234177a8c32a1c1dfc88db53d15dc780c8b3db52  steamos-customizations-deckard-20260823.1-2-any.pkg.tar.zst
 7b48224c305685487896434ca253250b9c63104ca22d6fd3ce4b497b9cc72931  steamos-manager-26.4.1-2-aarch64.pkg.tar.zst
+bd1966dbecdb8887667994cecd0cc359e789b7635fc2b39b7fe87442150cb61c  steamos-passwd-1.0-1-any.pkg.tar.zst
 ab5243dc9a1d9d522505c8637f7df785a255a108d18f30f879237c9eaae0f723  strace-6.16-1-aarch64.pkg.tar.zst
 bb9a6c2e367c25df438a24640ce2a0762137d4fe96b48fba4deb960d28b7b915  sudo-1.9.17.p2-1-aarch64.pkg.tar.zst
 24a2530585634d2662d0ecb5c49dc17a1e7f62b002e146480d5b29288ffa3113  svt-av1-3.1.2-1-aarch64.pkg.tar.zst
