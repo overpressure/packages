@@ -274,6 +274,12 @@ need "desktop: Steam's Desktop entry" grep -qx 'X-Steam-Special=Desktop' /usr/sh
 for program in steamos-nested-desktop startplasma-wayland kwin_wayland_wrapper; do
 	need "desktop: $program" [ -x "/usr/bin/$program" ]
 done
+# Software in Desktop mode, as on SteamOS: Discover with Flathub, system-wide on the data partition.
+for program in flatpak plasma-discover; do
+	need "desktop: $program" [ -x "/usr/bin/$program" ]
+done
+need "flatpak: Flathub system-wide" sh -c "flatpak remotes --system --columns=name | grep -qx flathub"
+need "flatpak: its apps on the data partition" [ "$(findmnt -no TARGET /var/lib/flatpak 2>/dev/null)" = /var/lib/flatpak ]
 os_id=$(. /etc/os-release && echo "${ID:-}")
 os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-}")
 

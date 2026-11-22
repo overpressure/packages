@@ -157,6 +157,10 @@ xdg-desktop-portal-kde
 kdialog
 dolphin
 konsole
+# Software in Desktop mode, as on SteamOS: Discover with Flathub, system-wide in /var/lib/flatpak, which the
+# Frame's offload binds put on the data partition. Holo's, matching its Plasma.
+flatpak
+discover
 # "!name" satisfies dependencies on name without installing it:
 # pico4-session.service replaces sddm.
 !sddm
