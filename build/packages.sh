@@ -91,8 +91,10 @@ mount_api() {
     mnt -t devpts -o newinstance,ptmxmode=0666 devpts "$1/dev/pts"
     mnt -t tmpfs tmpfs "$1/run"
 }
+# pacman downloads through ALL_PROXY when it is set: on the headset the PC's connection, whose names resolve
+# on the PC (phoenix's dev install --on-headset --packages, which builds changed recipes there).
 in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root \
-    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$@"; }
+    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" ${ALL_PROXY:+ALL_PROXY="$ALL_PROXY"} "$@"; }
 
 host_arch=$(uname -m)
 if [[ $host_arch != aarch64 ]] && ! grep -qs '^flags: .*F' /proc/sys/fs/binfmt_misc/*aarch64*; then
