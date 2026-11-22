@@ -4,7 +4,7 @@
 # pico4-listeners, pico4-still-gate), the XR devices' permissions and the cameras kept from v4l_id and
 # WirePlumber. The preset enables the sensors; the tests run in the build.
 pkgname=pico4-xr
-pkgver=1
+pkgver=2026.11.22
 pkgrel=1
 pkgdesc="PICO 4 XR hardware: the sensor and compute DSPs, the head IMU, the station, lenses and cameras"
 arch=(any)

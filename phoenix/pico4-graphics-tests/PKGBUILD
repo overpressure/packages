@@ -1,6 +1,6 @@
 # The PICO 4's Vulkan acceptance test: an offscreen render with pixel readback.
 pkgname=pico4-graphics-tests
-pkgver=2
+pkgver=2026.11.22
 pkgrel=1
 pkgdesc="PICO 4 native graphics acceptance test (offscreen Vulkan)"
 arch=(aarch64)

@@ -14,8 +14,8 @@ image, so that an image's build downloads them instead of compiling them.
 | `sm8250/` | packages for the Snapdragon XR2 (SM8250): hexagonrpc, the DSPs' file server | `sm8250-*` |
 | `phoenix/` | packages for the PICO 4: Monado with the PICO 4's driver and its tools, Basalt with the PICO 4's settings, `pico4-slamd` (the default head tracker: the host for PICO OS's libSlam on the CDSP), the compositor's swapchain layer, Steam Link's controller shim, the graphics test, and the system around Valve's userspace with its tests: `pico4-base` (preinit, storage and recovery policy, USB link, network), `pico4-power` (fan, battery guard, power key), `pico4-audio`, `pico4-xr` (DSPs, IMU, station, lenses, cameras), `pico4-session` (Valve's session and SteamVR's settings), `pico4-checks` (the acceptance checks); each one's preset enables its units | `pico4-*` |
 | `headsets/<codename>/` | a headset's image definition: `layers`, `pacman.conf`, `packages.txt`, `packages.lock` | |
-| `build/packages.sh`, `build/plan.py`, `build/notes.py` | the build of a headset's packages; the jobs and cache keys CI builds them with; a release's notes | |
-| `tests/` | the checks of the layout, of the build plan, of the release notes and of pico4-monado's texts | |
+| `build/packages.sh`, `build/plan.py`, `build/notes.py`, `build/versions.py` | the build of a headset's packages; the jobs and cache keys CI builds them with; a release's notes; a release's name and the check that changed recipes raise their version | |
+| `tests/` | the checks of the layout, of the build plan, of the release notes, of the versions and of pico4-monado's texts | |
 
 Each folder in a layer is one recipe, a `PKGBUILD` with the files it builds, installs or applies beside
 it, the project's own code among them; a code package's unit tests run in its `build()`. A recipe pins
@@ -79,7 +79,12 @@ definition: `pacman.conf`, `packages.lock` and the packages `packages.txt` takes
 repository. Adding one of the project's packages to `packages.txt` moves no other key. Each key is built once:
 a key built before comes from `main`'s cache or from the artifact an earlier run of this repository left under
 it (a pull request's, never a fork's), so a change builds only the packages it touches, once, on its pull
-request. A release publishes those builds under a tag `YYYY.MM.DD` (or `YYYY.MM.DD.N`): every layer's packages
+request. A release publishes those builds under a calendar version, as overpressure's releases
+([versions across the project](https://github.com/overpressure/overpressure/blob/main/docs/releasing.md#versions-across-the-project)):
+`YYYY.M.PATCH`, this month's next free patch (`2026.11.20`; the releases before it were named by their day, `2026.11.19`,
+`2026.11.19.1`, and sort before it). A recipe changed since the newest release raises its version (`pkgrel`, or
+`pkgver` for a new upstream version; the project's own packages without an upstream take the date of their change,
+`pkgver=2026.11.22`), which CI checks (`build/versions.py check`). A release holds every layer's packages
 and database, the copyleft packages' sources and `SHA256SUMS`. `main` changes only by pull request, only a release
 started by hand releases (a date tag pushed by hand releases nothing), and released tags never move or disappear
 (rulesets). The release's download folder is a pacman server for every layer:

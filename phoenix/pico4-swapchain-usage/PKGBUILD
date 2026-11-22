@@ -2,7 +2,7 @@
 # it never uses, so that they can be compressed, and paced as the stock path paces them. An implicit
 # Vulkan layer, active only in vrcompositor.
 pkgname=pico4-swapchain-usage
-pkgver=1
+pkgver=2026.11.22
 pkgrel=1
 pkgdesc="PICO 4 pacing and scanout usage for SteamVR's compositor"
 arch=(aarch64)

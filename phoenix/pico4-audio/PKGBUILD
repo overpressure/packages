@@ -3,7 +3,7 @@
 # (pico4-audiocal; the image's build exports PICO OS's calibration with it) and the microphone muted while
 # the headset is off the head. The preset enables the audio target; the tests run in the build.
 pkgname=pico4-audio
-pkgver=1
+pkgver=2026.11.22
 pkgrel=1
 pkgdesc="PICO 4 audio: the ADSP, its audio process, the sound card's routes and calibration, the microphone mute"
 arch=(any)

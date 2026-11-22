@@ -3,8 +3,8 @@
 # reads), the suspend check, the support bundle and the link's samples after
 # boot. The preset enables the link samples; the tests run in the build.
 pkgname=pico4-checks
-pkgver=1
-pkgrel=3
+pkgver=2026.11.22
+pkgrel=1
 pkgdesc="PICO 4 checks: the system's and the VR session's acceptance checks, the support bundle"
 arch=(any)
 url="https://github.com/overpressure/phoenix/tree/main/docs"

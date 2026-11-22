@@ -5,8 +5,8 @@
 # system's policy files. preinit and charger mode source stage 1's lib.sh, which the image takes from stage 1.
 # The preset enables the services; the tests run in the build.
 pkgname=pico4-base
-pkgver=1
-pkgrel=4
+pkgver=2026.11.22
+pkgrel=1
 pkgdesc="PICO 4 system: preinit, storage and recovery policy, USB link, network, clock, firmware probes"
 arch=(any)
 url="https://github.com/overpressure/phoenix/tree/main/docs"

@@ -5,7 +5,7 @@
 # (pico4-base's preinit, from the data partition's copy and the dsp partition); this package holds the
 # root's own programs and its mount points. The image-processing tests run natively first.
 pkgname=pico4-slamd
-pkgver=1
+pkgver=2026.11.22
 pkgrel=1
 pkgdesc="PICO 4 head tracker host for PICO OS's libSlam in its bionic root"
 arch=(aarch64)

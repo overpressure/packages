@@ -3,7 +3,7 @@
 # the power key, a short press to suspend and a 2 s hold to power off (powerkey, with logind leaving
 # the key alone). The preset enables the three services; the tests run in the build.
 pkgname=pico4-power
-pkgver=1
+pkgver=2026.11.22
 pkgrel=1
 pkgdesc="PICO 4 fan control, battery guard and power key, as on PICO OS"
 arch=(any)

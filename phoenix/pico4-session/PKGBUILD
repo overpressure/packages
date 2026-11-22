@@ -6,7 +6,7 @@
 # build puts into the user's home and SteamVR's remapping. The preset enables the session; the tests run in
 # the build.
 pkgname=pico4-session
-pkgver=1
+pkgver=2026.11.22
 pkgrel=1
 pkgdesc="PICO 4 session: Valve's VR session started without a display manager, with SteamVR and Steam set up for the PICO 4"
 arch=(any)

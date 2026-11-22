@@ -5,7 +5,8 @@
 # a key built before comes from main's cache, or from the artifact an earlier run of this repository (never
 # a fork's) left under that key, such as the pull request's. One job then writes each layer's database.
 # A release is started by hand on main (Run workflow, with what it brings): the run builds as any push does,
-# then tags main's commit with the next free date (YYYY.MM.DD, or YYYY.MM.DD.N) and publishes the packages as a
+# then tags main's commit with the next calendar version (YYYY.M.PATCH: this month's next free patch, as
+# overpressure's releases; build/versions.py) and publishes the packages as a
 # release: per layer its packages and its database, and the copyleft packages' complete sources, with notes on
 # what changed since the previous release. Only a run started by hand releases: a date tag pushed by hand
 # releases nothing, and the next release skips its name. A release's download folder is a pacman server for every
@@ -47,11 +48,15 @@ jobs:
       packages: ${{ steps.plan.outputs.packages }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the releases' tags: what each recipe's version was
       - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
           version: "0.9.26"
       - name: Layers, recipes and image definitions
         run: python3 -m unittest -v
+      - name: Every recipe changed since the newest release raises its version
+        run: python3 build/versions.py check
       - name: The shell scripts, the build's and the recipes'
         run: python3 build/shellcheck.py
       - name: The Python code, overpressure's ruff and ty (pyproject.toml)
@@ -181,14 +186,12 @@ jobs:
             echo "main moved since this run started: start the release again" >&2
             exit 1
           fi
-          # The next free name of the day: YYYY.MM.DD, then YYYY.MM.DD.1, ...
-          day=$(date -u +%Y.%m.%d)
-          name=$day
-          n=0
-          while git rev-parse -q --verify "refs/tags/$name" > /dev/null; do
-            n=$((n + 1))
-            name=$day.$n
-          done
+          # The next calendar version: this month's next free patch (YYYY.M.PATCH, UTC).
+          name=$(python3 build/versions.py next-release)
+          if git rev-parse -q --verify "refs/tags/$name" > /dev/null; then
+            echo "$name is taken already" >&2
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$name" -m "$WHAT" -m "Started by @$GITHUB_ACTOR." "$GITHUB_SHA"
