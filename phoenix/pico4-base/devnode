@@ -11,7 +11,8 @@
 # the sweep before it mounts anything. The one exception is the installed system's
 # data partition (userdata holding the pico4-data file system), which preinit makes
 # writable and mounts: set read-only under the mounted file system, its writeback
-# fails and data is lost.
+# fails and data is lost. The installed system's super stays writable too while steamos-readonly has made
+# the system writable (/.pico4-writable in its image).
 #
 # The sweep runs before the system's file systems are ready (preinit, then before
 # local-fs-pre.target), over about 120 devices: it reads sysfs with shell builtins,
@@ -48,6 +49,12 @@ installed_data() {
 	data=$1
 }
 
+# writable_system PARTNAME: true for the installed system's super while steamos-readonly has made the system
+# writable: its setting is a file in the image itself, so a fresh image (an upgrade) is read-only again.
+writable_system() {
+	[ "$installed" = 1 ] && [ "$1" = super ] && [ -e /.pico4-writable ]
+}
+
 # installed_data_disk NAME: true for the disk of the installed system's data partition while it is
 # writable: the kernel counts a disk's read-only flag for its partitions too.
 installed_data_disk() {
@@ -70,7 +77,8 @@ block_policy() {
 	[ -e "/sys/class/block/$name" ] || return 0
 	partname "$name"
 	local part=$REPLY
-	if [ "$rw" != 1 ] && ! installed_data "$name" "$part" && ! installed_data_disk "$name"; then
+	if [ "$rw" != 1 ] && ! installed_data "$name" "$part" && ! installed_data_disk "$name" &&
+		! writable_system "$part"; then
 		read -r ro < "/sys/class/block/$name/ro"
 		[ "$ro" = 1 ] || to_ro+=("/dev/$name")
 	fi

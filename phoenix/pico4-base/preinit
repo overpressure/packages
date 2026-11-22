@@ -50,6 +50,15 @@ fi
 
 # Every disk and partition read-only as it is (the data partition is the one exception).
 /usr/libexec/pico4/devnode sweep
+# steamos-readonly disable made the system writable until enable or the next upgrade, whose fresh image has
+# no /.pico4-writable: the sweep left super writable, and the root is mounted so too.
+if [ -e /.pico4-writable ]; then
+	if mount -o remount,rw /; then
+		log "preinit: the system is writable (steamos-readonly disable)"
+	else
+		log "preinit: the system stays read-only: remounting it writable failed"
+	fi
+fi
 data=$(readlink -f /dev/block/by-name/userdata 2>/dev/null)
 [ -b "$data" ] || fail "no userdata partition"
 [ "$(ext_label "$data" 2>/dev/null)" = pico4-data ] || fail "userdata holds no pico4-data file system"

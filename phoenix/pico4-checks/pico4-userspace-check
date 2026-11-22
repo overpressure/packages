@@ -98,10 +98,20 @@ need "root is the system image in super (is: $root_src)" [ "$installed" = true ]
 # userdata's disk writable; its other partitions keep their own flags and are checked here.
 data_disk=$(basename "$(readlink -f "/sys/class/block/${data_dev##*/}/..")")
 writable=$(grep -vx -e "${data_dev##*/}" -e "$data_disk" <<<"$writable")
+# steamos-readonly disable makes the system writable until enable or the next upgrade: then super too.
+system_writable=false
+[ -e /.pico4-writable ] && system_writable=true
+[ "$system_writable" = false ] || writable=$(grep -vx -e "${system_dev##*/}" <<<"$writable")
 need "every physical block device but userdata read-only" [ -z "$writable" ]
 # Read-only under the mounted file system, its writeback fails and data is lost.
 need "userdata writable" [ "$(cat "/sys/class/block/${data_dev##*/}/ro" 2>/dev/null)" = 0 ]
-need "system image mounted read-only" sh -c "findmnt -no OPTIONS / | grep -q '^ro,'"
+if [ "$system_writable" = false ]; then
+	need "system image mounted read-only" sh -c "findmnt -no OPTIONS / | grep -q '^ro,'"
+	need "super read-only" [ "$(cat "/sys/class/block/${system_dev##*/}/ro" 2>/dev/null)" = 1 ]
+else
+	need "system image writable (steamos-readonly disable)" sh -c "findmnt -no OPTIONS / | grep -q '^rw,'"
+fi
+need "steamos-readonly is the PICO 4's" [ "$(readlink -f /usr/bin/steamos-readonly)" = /usr/libexec/pico4/steamos-readonly ]
 need "data on userdata" [ "$(findmnt -no SOURCE /data)" = "$data_dev" ]
 # PICO OS's files (the image holds only links): its modem, dsp and bluetooth partitions mounted
 # read-only by preinit, and the data partition's copy that the install writes from the backup.
@@ -311,8 +321,8 @@ printf ',"systemd":{"pid1":%s,"version":%s,"state":%s,"failed_units":%s,"tainted
 	"$(json_list <<<"$failed")" "$(json_str "$taint")"
 printf ',"dev":{"fstype":%s,"missing_nodes":%s,"udev_devices":%s}' \
 	"$(json_str "$dev_fs")" "$(json_list <<<"$missing_nodes")" "${udev_devices:-0}"
-printf ',"storage":{"root":%s,"installed":%s,"writable_block_devices":%s}' "$(json_str "$root_src")" "$installed" \
-	"$(json_list <<<"$writable")"
+printf ',"storage":{"root":%s,"installed":%s,"system_writable":%s,"writable_block_devices":%s}' \
+	"$(json_str "$root_src")" "$installed" "$system_writable" "$(json_list <<<"$writable")"
 printf ',"usb_link":{"status":%s,"now":%s}' "$(json_str "$link_status")" "$(json_str "$link_now")"
 printf ',"seats":%s,"packages":%s' "$(json_list <<<"$seats")" "${packages:-0}"
 printf ',"session":{"user":%s,"user_state":%s,"service":%s,"target":%s,"target_state":%s,"failed_units":%s' \

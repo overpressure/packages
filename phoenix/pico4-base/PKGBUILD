@@ -66,6 +66,7 @@ source=(50-pico4-usb.conf
         persist
         preinit
         remoteproc-boot
+        steamos-readonly
         usb-gadget
         usb-internet
         venus-probe
@@ -73,7 +74,7 @@ source=(50-pico4-usb.conf
         wlan-probe
         vrdevice_path
         test_clock.py test_config.py test_qca6390.py test_usb_internet.py
-        test_boot_attempts.sh test_charger.sh
+        test_boot_attempts.sh test_charger.sh test_steamos_readonly.sh
         50-pico4-base.preset)
 sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
             'a4671220f5b6aa835752b9d43439895ab33fec8cb4ef6604b7675a447ebeee70'
@@ -115,11 +116,12 @@ sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
             '73df2eef1c75bac824d957997a34b7ff60cbf452fb232654b5e99e5fb537055b'
             '19d8a3e7288431a3abed80992365e51c00ea2ceeb25f6f26d9a24df50de394ea'
             'ebbbd0c3cc36a5eaf78c9f1cafa73526bb59d8959863933c904bbeb9da0eaff4'
-            '4558eeb49f836c192e33fa06f5ab2e8d0b95f47ada59e8ef43e74b6bb0b58650'
+            'a510583c8740b3c464036cb27db2603392a273ae34f8aad4bd0b07390d710009'
             'e595217122c5d1d7c1fe2d2102728704659e3ebf9f9bbad044925741d3c95dd6'
             '95a1344e4d74defeae8d67e504368ab433aceea7fb645a997f7dba57cd4cffe2'
-            '68ac16b9c286f705eb0abd93c6b2070e46c03298b83eee69f90dd1b435e5c221'
+            '9f1a227ffefe6dda0dbb566122319773859b775d963cb196ac7632a3a702812b'
             'e70848b47705026cd480904c0b00f9eb28edba124f4c1583f835233cef902176'
+            'cf06040d21a75707b0ce84cd5f800fa426ead4494250cb8de7d0f1a5502b066e'
             'aef6ca675b62fc2662158ead16df9ee2163c6cdd045ead0dd17bf6d40e08dcfa'
             '07d2a70365730acc970ac204a84f7c2cf14602aa0945998a494073d2e92839f3'
             '0057f3ea6532929b95100669859e6c6a86c247fa8e6306c4aa1df91eb12ed8fa'
@@ -132,12 +134,14 @@ sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
             'efc4c843f5335d5ed72f87585cd0edfa98107957496380580d5b77792ac5e60a'
             '773d6276040a1d5625d1e53aaaccf7ecd380e877454f657c8e293e98fb4ad905'
             '51df9a5f288c1d04cc1de4973ba0a51f1745fab5af4c44f1eee6a1791dfc00af'
+            'a74dd6e7487fa7c16f6fc995f3ee0a9ec321fceac9f4649d2664b5ba95850201'
             'fc5ed844a4a3b0e698c18331532f6686c6e766467b623890c82a7ef71fbbc0e0')
 
 build() {
   python3 -B -m unittest test_clock test_config test_qca6390 test_usb_internet
   bash test_boot_attempts.sh
   bash test_charger.sh
+  bash test_steamos_readonly.sh
 }
 
 package() {
@@ -186,6 +190,8 @@ package() {
   install -Dm755 persist "$pkgdir/usr/libexec/pico4/persist"
   install -Dm755 preinit "$pkgdir/usr/libexec/pico4/preinit"
   install -Dm755 remoteproc-boot "$pkgdir/usr/libexec/pico4/remoteproc-boot"
+  # Valve's /usr/bin/steamos-readonly handles btrfs only: the image build links it to this one.
+  install -Dm755 steamos-readonly "$pkgdir/usr/libexec/pico4/steamos-readonly"
   install -Dm755 usb-gadget "$pkgdir/usr/libexec/pico4/usb-gadget"
   install -Dm755 usb-internet "$pkgdir/usr/libexec/pico4/usb-internet"
   install -Dm755 venus-probe "$pkgdir/usr/libexec/pico4/venus-probe"
