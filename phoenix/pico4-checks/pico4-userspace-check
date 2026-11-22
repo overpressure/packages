@@ -250,6 +250,10 @@ battery_capacity=$(num "$(psv battery capacity)")
 battery_ma=$(milli "$(psv battery current_now)")
 
 packages=$(pacman -Q 2>/dev/null | wc -l)
+# pacman's database is the image's, as on SteamOS: no copy on the data partition describes another one.
+need "pacman: the image's database" grep -qx 'DBPath = /usr/lib/holo/pacmandb/' /etc/pacman.conf
+need "pacman: the database is in the image" [ -d /usr/lib/holo/pacmandb/local ]
+need "pacman: no database on the data partition" [ ! -e /var/lib/pacman ]
 pkg() { pacman -Q "$1" 2>/dev/null | awk '{print $2}'; }
 for p in steamos-customizations-deckard steamos-manager gamescope pipewire deckard-mesa-linux-aarch64; do
 	need "package $p installed" pacman -Q "$p"

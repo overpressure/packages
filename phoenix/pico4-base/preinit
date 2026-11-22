@@ -6,8 +6,8 @@
 # executes systemd. When that fails it reboots into recovery, where the maintenance stage 1 starts.
 #
 # The data partition (userdata, ext4 "pico4-data") holds what changes: /etc's changes (an
-# overlay), /var, /home and /root. On the first boot, and for /var/lib/pacman after each new
-# system image, they start as the image has them.
+# overlay), /var, /home and /root. On the first boot they start as the image has them. pacman's
+# database is the image's own (/usr/lib/holo/pacmandb), as on SteamOS.
 export PATH=/usr/bin
 umask 022
 # A failed exec of systemd returns here instead of ending PID 1 (a panic).
@@ -73,7 +73,6 @@ if [ -z "$unit" ]; then
 	[ -z "$attempts" ] || log "preinit: $attempts"
 fi
 
-image=$(cat /usr/share/pico4/system-image 2>/dev/null)
 if [ ! -e /data/.pico4-initialized ]; then
 	log "preinit: first boot of the installed system: data from the image"
 	for dir in var root home; do
@@ -82,13 +81,12 @@ if [ ! -e /data/.pico4-initialized ]; then
 	done
 	mkdir -p /data/etc/upper /data/etc/work
 	touch /data/.pico4-initialized
-elif [ "$(cat /data/.pico4-system-image 2>/dev/null)" != "$image" ]; then
-	# A new system image: its package database replaces the old one.
-	log "preinit: new system image: package database from the image"
-	rm -rf /data/var/lib/pacman
-	cp -a /var/lib/pacman /data/var/lib/ || fail "copying the package database"
 fi
-echo "$image" > /data/.pico4-system-image
+# Systems before kept a copy of pacman's database here, which describes another image.
+if [ -e /data/var/lib/pacman ]; then
+	log "preinit: removing the copy of pacman's database on the data partition (it is the image's)"
+	rm -rf /data/var/lib/pacman || fail "removing the old copy of pacman's database"
+fi
 # Without the inodes index: an update replaces the lower /etc whole, and with the index (a
 # mainline kernel's default) the upper directory stays tied to the image it was made with
 # ("failed to verify upper root origin").
