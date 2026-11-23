@@ -35,6 +35,24 @@ get_number(const cJSON *obj, const char *name, double *out)
 	return false;
 }
 
+//! A keyValue in the stock SDK lens configuration's configData array.
+static bool
+get_config_number(const cJSON *entries, const char *name, double *out)
+{
+	const cJSON *entry;
+	if (!cJSON_IsArray(entries)) {
+		return false;
+	}
+	cJSON_ArrayForEach(entry, entries)
+	{
+		const cJSON *key = cJSON_GetObjectItemCaseSensitive(entry, "keyName");
+		if (cJSON_IsString(key) && key->valuestring != NULL && strcmp(key->valuestring, name) == 0) {
+			return get_number(entry, "keyValue", out);
+		}
+	}
+	return false;
+}
+
 bool
 pico4_lens_parse_optical(const char *json_text, struct pico4_lens out_lenses[2])
 {
@@ -70,6 +88,48 @@ pico4_lens_parse_optical(const char *json_text, struct pico4_lens out_lenses[2])
 		out_lenses[e] = l;
 	}
 	cJSON_Delete(root);
+	return ok;
+}
+
+bool
+pico4_lens_parse_optical_sdk(const char *json_text,
+                             const char *config_text,
+                             struct pico4_lens out_lenses[2])
+{
+	static const char *eyes[2] = {"left", "right"};
+	cJSON *root = cJSON_Parse(json_text);
+	cJSON *config = cJSON_Parse(config_text);
+	const cJSON *center = NULL;
+	const cJSON *entries = NULL;
+	double f = 0;
+	double k[PICO4_LENS_COEFFS] = {0};
+	bool ok = root != NULL && config != NULL;
+
+	if (ok) {
+		center = cJSON_GetObjectItemCaseSensitive(root, "lens_center_gos");
+		entries = cJSON_GetObjectItemCaseSensitive(config, "configData");
+		ok = get_config_number(entries, "sdk_lens_metersPerTanAngleAtCenter", &f) && f > 0;
+	}
+	for (int i = 0; ok && i < PICO4_LENS_COEFFS; i++) {
+		char name[64];
+		snprintf(name, sizeof(name), "sdk_lens_distortionCoefficients%d", i);
+		ok = get_config_number(entries, name, &k[i]);
+	}
+	for (int e = 0; ok && e < 2; e++) {
+		struct pico4_lens l = {0};
+		l.f = f;
+		memcpy(l.k, k, sizeof(k));
+		double mm;
+		if (center != NULL && get_number(cJSON_GetObjectItemCaseSensitive(center, "centerx"), eyes[e], &mm)) {
+			l.cx = -mm * 0.001;
+		}
+		if (center != NULL && get_number(cJSON_GetObjectItemCaseSensitive(center, "centery"), eyes[e], &mm)) {
+			l.cy = -mm * 0.001;
+		}
+		out_lenses[e] = l;
+	}
+	cJSON_Delete(root);
+	cJSON_Delete(config);
 	return ok;
 }
 

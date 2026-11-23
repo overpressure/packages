@@ -50,11 +50,36 @@ static const char *config =
     "{\"keyName\": \"sdk_lens_chromaticAberration5\", \"keyValue\": \"0\"},"
     "{\"keyName\": \"sdk_lens_distortionCoefficients1\", \"keyValue\": \"9\"}]}";
 
+// A PICO OS variant that keeps the lens coefficients in the SDK configuration
+// instead of OpticalCalibrationData.json's distortion_parameter, and has only
+// the lens centre in the JSON. Synthetic values, as above.
+static const char *optical_sdk =
+    "{\"lens_center_gos\": {\"centerx\": {\"left\": \"0.5\", \"right\": \"0\"},"
+    " \"centery\": {\"left\": \"0\", \"right\": \"-0.25\"}}}";
+
+static const char *config_sdk =
+    "{\"configData\": ["
+    "{\"keyName\": \"sdk_lens_metersPerTanAngleAtCenter\", \"keyValue\": \"0.025\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients0\", \"keyValue\": \"1\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients1\", \"keyValue\": \"0.5\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients2\", \"keyValue\": \"0\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients3\", \"keyValue\": \"0\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients4\", \"keyValue\": \"0\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients5\", \"keyValue\": \"0\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients6\", \"keyValue\": \"0\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients7\", \"keyValue\": \"0\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients8\", \"keyValue\": \"0\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients9\", \"keyValue\": \"0\"},"
+    "{\"keyName\": \"sdk_lens_distortionCoefficients10\", \"keyValue\": \"0\"},"
+    "{\"keyName\": \"sdk_lens_chromaticAberration0\", \"keyValue\": \"0.01\"}]}";
+
 int
 main(void)
 {
 	struct pico4_lens lens[2];
+	struct pico4_lens sdk[2];
 	struct pico4_lens_ca ca;
+	struct pico4_lens_ca no_ca = {{0}};
 
 	EXPECT(pico4_lens_parse_optical(optical, lens));
 	EXPECT(NEAR(lens[0].f, 0.025) && NEAR(lens[0].k[1], 0.5) && NEAR(lens[1].k[0], 1));
@@ -65,6 +90,26 @@ main(void)
 	EXPECT(pico4_lens_parse_ca(config, &ca));
 	EXPECT(NEAR(ca.ca[0], 0.01) && NEAR(ca.ca[2], -0.02));
 	EXPECT(!pico4_lens_parse_ca("{\"configData\": []}", &ca) && pico4_lens_parse_ca(config, &ca));
+
+	// The SDK fallback: the JSON has no distortion_parameter; the coefficients are in configData.
+	EXPECT(!pico4_lens_parse_optical(optical_sdk, lens));
+	EXPECT(pico4_lens_parse_optical_sdk(optical_sdk, config_sdk, sdk));
+	EXPECT(NEAR(sdk[0].f, 0.025) && NEAR(sdk[0].k[0], 1) && NEAR(sdk[0].k[1], 0.5));
+	EXPECT(NEAR(sdk[1].f, 0.025) && NEAR(sdk[1].k[1], 0.5));
+	EXPECT(NEAR(sdk[0].cx, -0.0005) && NEAR(sdk[1].cy, 0.00025));
+	EXPECT(!pico4_lens_parse_optical_sdk(optical_sdk, config, sdk));
+	double sl, sr, su, sd, gl, gr, gu, gd;
+	pico4_lens_fov(&sdk[0], &sl, &sr, &su, &sd);
+	pico4_lens_fov(&lens[0], &gl, &gr, &gu, &gd);
+	EXPECT(NEAR(sl, gl) && NEAR(sr, gr) && NEAR(su, gu) && NEAR(sd, gd));
+	for (double x = -0.016; x <= 0.016; x += 0.008) {
+		for (double y = -0.016; y <= 0.016; y += 0.008) {
+			double fwd[3][2], bx, by;
+			pico4_lens_tan(&sdk[0], &no_ca, x, y, fwd);
+			EXPECT(pico4_lens_inverse(&sdk[0], &no_ca, 1, fwd[1][0], fwd[1][1], &bx, &by));
+			EXPECT(fabs(bx - x) < 1e-9 && fabs(by - y) < 1e-9);
+		}
+	}
 
 	// s(rsq) = 1 + 0.5 rsq.
 	EXPECT(NEAR(pico4_lens_scale(&lens[0], 2), 2));

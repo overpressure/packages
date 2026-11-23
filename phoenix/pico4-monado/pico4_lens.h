@@ -46,6 +46,19 @@ struct pico4_lens_ca
 bool
 pico4_lens_parse_optical(const char *json_text, struct pico4_lens out_lenses[2]);
 
+/*!
+ * Parse both eyes (0 left, 1 right) from OpticalCalibrationData.json and the
+ * stock SDK lens configuration (SDK_Lens_ConfigFile.txt). Some PICO OS builds
+ * keep the lens coefficients in the SDK file as
+ * sdk_lens_metersPerTanAngleAtCenter and sdk_lens_distortionCoefficients0..10
+ * instead of OpticalCalibrationData.json's distortion_parameter; the lens
+ * centre offsets still come from the JSON as in pico4_lens_parse_optical.
+ */
+bool
+pico4_lens_parse_optical_sdk(const char *json_text,
+                             const char *config_text,
+                             struct pico4_lens out_lenses[2]);
+
 //! Parse the six chromatic aberration terms from the stock lens configuration (JSON text).
 bool
 pico4_lens_parse_ca(const char *json_text, struct pico4_lens_ca *out_ca);
