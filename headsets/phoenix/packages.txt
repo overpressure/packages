@@ -21,8 +21,8 @@ deckard-arch-hotfixes-release-0.3/steamos-customizations-deckard
 deckard-arch-hotfixes-release-0.3/steamos-manager
 # Steam's Developer > Set user password runs it: it hands the new password to passwd as the session user
 deckard-arch-hotfixes-release-0.3/steamos-passwd
-# The Frame's swap: zram at half the RAM through zram-generator (PICO OS swaps to zram
-# the same way)
+# The Frame's swap: zram through zram-generator, which pico4-base sizes to the RAM with zstd
+# (the Frame has twice the PICO 4's memory)
 deckard-arch-hotfixes-release-0.3/holo-zram-swap
 # The Frame's build: the Steam client's Wi-Fi connections ask for its 802-11-wireless.band "no6"
 deckard-arch-hotfixes-release-0.3/networkmanager

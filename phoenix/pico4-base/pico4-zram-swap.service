@@ -1,8 +1,9 @@
-# The Frame's zram swap (holo-zram-swap: zram0 at half the RAM, lzo-rle; docs/userspace.md#memory).
-# zram-generator's own swap unit has no PICO OS priority, so its generator is masked and this
-# unit runs the same setup from the Frame's configuration, with the priority PICO OS's script uses.
+# zram swap through the Frame's zram-generator (holo-zram-swap), as big as the RAM with zstd
+# (50-pico4-zram.conf; docs/userspace.md#memory). zram-generator's own swap unit has no PICO OS
+# priority, so its generator is masked and this unit runs the same setup, with the priority PICO
+# OS's script uses.
 [Unit]
-Description=Swap on zram as on the Steam Frame
+Description=Swap on zram, as big as the RAM
 DefaultDependencies=no
 Before=swap.target shutdown.target
 Conflicts=shutdown.target

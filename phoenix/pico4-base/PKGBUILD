@@ -5,8 +5,8 @@
 # system's policy files. preinit and charger mode source stage 1's lib.sh, which the image takes from stage 1.
 # The preset enables the services; the tests run in the build.
 pkgname=pico4-base
-pkgver=2026.11.22
-pkgrel=2
+pkgver=2026.11.23
+pkgrel=1
 pkgdesc="PICO 4 system: preinit, storage and recovery policy, USB link, network, clock, firmware probes"
 arch=(any)
 url="https://github.com/overpressure/phoenix/tree/main/docs"
@@ -28,6 +28,7 @@ source=(50-pico4-usb.conf
         sshd_config.d-50-pico4.conf
         50-pico4-console.conf
         50-pico4-memory.conf
+        50-pico4-zram.conf
         50-pico4-limit.conf
         home.mount
         journald.conf.d-50-pico4.conf
@@ -83,6 +84,7 @@ sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
             '6bd3a42f445a9acf0cc449e75d5032e2c639d518718a89a6dfc251c29031d309'
             'f02cc9aea7e6622e6081b8e9db6a30e6514a45c3b536c265fa271d2e01fc15eb'
             '335e235d1c7ec9aaf434e07e5b9e8415077cb4c99088ee43765f58abc2d369dc'
+            'f37bebf116496cac778724b1270030c500559c54e7b828daff7b28cb4da8ac8a'
             '571cbb4039945f1abb736e9b6ca275fc92cb55e68186a1666b2c38172973d596'
             '7b265b64a346746da295130bbe0f99b618e3673ac88f397418832391cace2d8e'
             'b0359f811740d2e07850235b55c97471e5becccc8a9b821d8ef1549f1f158d77'
@@ -108,7 +110,7 @@ sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
             '86009df87cdae1fa4e1c14237ea08fbcb126f71d168c697471286c41e553fa4b'
             'b04d41408c13b708e767363fe6f4d80495e04b54941ffa8fa71630e55b782af2'
             'd912af06c04ce754c6d954d7199e1de81406dcc69c8b3eece35d9f1c292f5e70'
-            '3c16dde0a17d5755a10a47a15a24f400296d7765d4cd68ac6fa24fca28d5c158'
+            '945d7cf3c1ab04e8593929a33590f76c84661d0fdbc5c5b030ca5ba2146fc46c'
             'a0606dd4c152bf731ea8458b55bada9a7ff8d33b17cf56163621d3db948f26f0'
             '94505847d8d5c58335685c477ec6b49dc53d4d0ceedaa865610f6f43ce1afb4b'
             '8a72e8d0375f04ee2d77e084d68dec3671e60fb55fff3f53b082061a27f400ba'
@@ -152,6 +154,7 @@ package() {
   install -Dm644 sshd_config.d-50-pico4.conf "$pkgdir/etc/ssh/sshd_config.d/50-pico4.conf"
   install -Dm644 50-pico4-console.conf "$pkgdir/etc/sysctl.d/50-pico4-console.conf"
   install -Dm644 50-pico4-memory.conf "$pkgdir/etc/sysctl.d/50-pico4-memory.conf"
+  install -Dm644 50-pico4-zram.conf "$pkgdir/usr/lib/systemd/zram-generator.conf.d/50-pico4.conf"
   install -Dm644 50-pico4-limit.conf "$pkgdir/etc/systemd/coredump.conf.d/50-pico4-limit.conf"
   install -Dm644 home.mount "$pkgdir/etc/systemd/system/home.mount"
   install -Dm644 journald.conf.d-50-pico4.conf "$pkgdir/usr/lib/systemd/journald.conf.d/50-pico4.conf"

@@ -300,6 +300,12 @@ need "system-auth: no empty password authenticates" \
 	bash -c '! grep -qE "^auth[[:space:]].*pam_unix\.so.*[[:space:]]nullok([[:space:]]|$)" /etc/pam.d/system-auth'
 need "sudo: wheel with its own password" grep -qx '%wheel ALL=(ALL:ALL) ALL' /etc/sudoers.d/10-pico4-wheel
 need "steamos-passwd: Steam's Set user password" [ -x /usr/bin/steamos-passwd ]
+# Swap: zram as big as the RAM with zstd (pico4-base's 50-pico4-zram.conf), at PICO OS's priority.
+zram_bytes=$(cat /sys/block/zram0/disksize 2>/dev/null || echo 0)
+ram_bytes=$(awk '$1 == "MemTotal:" {print $2 * 1024}' /proc/meminfo)
+need "zram0: as big as the RAM ($((zram_bytes >> 20)) of $((ram_bytes >> 20)) MiB)" [ "$zram_bytes" -ge "$((ram_bytes * 95 / 100))" ]
+need "zram0: zstd" grep -q '\[zstd\]' /sys/block/zram0/comp_algorithm
+need "zram0: swap at priority 32758" sh -c "swapon --show=NAME,PRIO --noheadings | grep -qE '^/dev/zram0 +32758$'"
 need "no unexpected network listener: $(pico4-listeners 2>/dev/null | grep -c UNEXPECTED)" pico4-listeners
 
 # -- Vulkan through Turnip (needs the GPU firmware from the stock firmware) ----
