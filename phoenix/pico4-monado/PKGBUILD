@@ -14,11 +14,12 @@
 # (pico4-openxr-display) through the OpenXR loader; pico4-cam checks the
 # tracking cameras on their own; pico4-ctrack-replay runs the controller LED
 # tracker over pico4-cam's recordings; pico4-roomview hands the forward cameras to
-# SteamVR's room view; overpressure-settings and pico4-onboarding are SteamVR
+# SteamVR's room view; the right controller's Capture button takes a screenshot in
+# the dashboard's bindings; overpressure-settings and pico4-onboarding are SteamVR
 # overlays (Overpressure Settings' dashboard tab, the first-run setup).
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=21
+pkgrel=22
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
@@ -148,8 +149,8 @@ sha256sums=(SKIP
             'c815d96fb72a7d9d3f042b8c37c755735a3cf430855bc0afd06189edfa30a741'
             'a99af31987d022891b692ceae68d5eda1c91809d97edc219045d9493e23b3b9a'
             '8eb1c38608f42ccf3599b731dbf4ae30c0deadbce6d715569f919e204e9bf3de'
-            'b5a9b6411e3b0ec409c2aee7c725b1bbd45edc376ec00e1ae79177da40457086'
-            'c231b75202e6881295f87ec55580bb96aaf13a2637fed78bc20499ed003c6fc8'
+            '0513bc1a180d8aa21a19126b6ab443a011923d3bc954e0cd574b80ee0e182f5e'
+            'd7ae4e0dff778e2627f4de663781f1c610fcc3d3b2002fc3363e3ca66766138c'
             '2a789ddf06894ec402ab73fb3cefbfdfadfe8d58d8fd20b2488c566d430fa170')
 
 prepare() {

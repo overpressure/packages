@@ -18,6 +18,7 @@
     "/input/b": {"type": "button", "side": "right", "click": true, "touch": true, "binding_image_point": [0, 0], "order": 5},
     "/input/x": {"type": "button", "side": "left", "click": true, "touch": true, "binding_image_point": [0, 0], "order": 4},
     "/input/y": {"type": "button", "side": "left", "click": true, "touch": true, "binding_image_point": [0, 0], "order": 5},
+    "/input/menu": {"type": "button", "side": "right", "click": true, "binding_image_point": [0, 0], "order": 6},
     "/output/haptic": {"type": "vibration", "binding_image_point": [0, 0]},
     "/pose/raw": {"type": "pose", "binding_image_point": [0, 0]},
     "/pose/tip": {"type": "pose", "binding_image_point": [0, 0]},

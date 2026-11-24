@@ -4,7 +4,7 @@
   "category": "steamvr_input",
   "controller_type": "pico_controller",
   "name": "SteamVR dashboard bindings for the PICO 4 controllers",
-  "description": "Home (right) or menu (left): once toggles the dashboard, twice the room view (as the Frame's system button); the aim pose points; each hand has the whole laser mouse, as Valve binds the Touch: the trigger clicks, the joystick click right-clicks, the grip middle-clicks, A or X goes home, B or Y back, the joystick scrolls.",
+  "description": "Home (right) or menu (left): once toggles the dashboard, twice the room view (as the Frame's system button); Capture (right) takes a screenshot; the aim pose points; each hand has the whole laser mouse, as Valve binds the Touch: the trigger clicks, the joystick click right-clicks, the grip middle-clicks, A or X goes home, B or Y back, the joystick scrolls.",
   "options": {},
   "simulated_actions": [],
   "alias_info": {},
@@ -28,6 +28,11 @@
             "double": {"output": "/actions/system/in/ToggleRoomView"},
             "held": {"output": "/actions/system/in/SystemButtonChord"}
           }
+        },
+        {
+          "path": "/user/hand/right/input/menu",
+          "mode": "button",
+          "inputs": {"click": {"output": "/actions/system/in/TakeScreenshot"}}
         }
       ],
       "chords": [
