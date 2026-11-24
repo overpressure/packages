@@ -14,11 +14,13 @@
 # (pico4-openxr-display) through the OpenXR loader; pico4-cam checks the
 # tracking cameras on their own; pico4-ctrack-replay runs the controller LED
 # tracker over pico4-cam's recordings; pico4-roomview hands the forward cameras to
-# SteamVR's room view; overpressure-settings and pico4-onboarding are SteamVR
+# SteamVR's room view, which the wearer's double tap on the headset switches as on PICO OS
+# (pico4_tap.h; pico4-tap-replay runs its detector over pico4-imu's recordings);
+# overpressure-settings and pico4-onboarding are SteamVR
 # overlays (Overpressure Settings' dashboard tab, the first-run setup).
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=21
+pkgrel=22
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
@@ -38,6 +40,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
+        pico4_tap.h pico4_tap.c test_pico4_tap.c pico4-tap-replay.c
         pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4-roomview.c
         pico4_lens_panel.h test_pico4_lens_panel.c pico4_settings.h overpressure-settings.cpp test_pico4_settings.c
         pico4_overlay.hpp pico4_panels.hpp pico4_pairing.h pico4_onboarding.h pico4-onboarding.cpp test_pico4_onboarding.c
@@ -55,7 +58,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_aimgrip.h test_pico4_aimgrip.c
         pico4-vrcompositor-bindings.json pico4-controller-profile.json pico4-vrlink-bindings.json)
 sha256sums=(SKIP
-            'ae281727c9ba9a14402c9f3765e22a5be56925a6d4fe68bb61053cc471ae1d5c'
+            'a65189ad8647ec6f5ecac77386dd6b489c3c1b96945030e7b09c1a4aa6ecb535'
             'f04b9832c6634909ea5015c942e10aa2780d2d217bbf1b20acd52673f2cefe3f'
             'c8d1cb81fdcd5ed8f61b55299f1b89d9cb16a18b4ae91944b081d241c06f49a3'
             'f847e3c43562aa0dd8b00c0d43b5e4af81c2997998df783c71eca379f7e00691'
@@ -70,7 +73,7 @@ sha256sums=(SKIP
             '079215437455bb24dabf36ca8598a43e69b25b7fbb20caebf8850fd7d137dc4e'
             '4ea7235b043e92d3ccb9a21277868a7afb2d8963a03d93a1623de8681a136ac6'
             'e712b477138e19966b8a4ba62758c096be2979664c7d97f40c1a1c91feeb5b8b'
-            '7b45549338fbf50e7db10762b105108382c1aa6644cf27b0a763a0db79b935a3'
+            '815604cadccf9cd158195ceac1a8898d78bf6eca38aa124ccc3216b1e70d544a'
             '44160658b28ea1bb24c6c2fc9f378fba14ffe6b1ae4ae2e8b9cbbb44c5ce96ac'
             '5a5317c24d19d91ac502707d6fa8e391d4ba7e1c93875bc8b4f77f14bb84a712'
             '3d3a356292827bde4644810731386f366e4f2afa029ee36fec9ecc1db4692363'
@@ -85,10 +88,14 @@ sha256sums=(SKIP
             '41bb03af46edb3c3a593cefbc2246382826a16a3b567619b937d9f45df85eedb'
             '46147c0c7d2013e76e4168479651813f462a9ee89e0ba3606427576b24099443'
             '723538607265c89266e50d5a301aabfcdf80b695088f0b73256364638bb83330'
-            'c9aed4ebbe10c87232c89dbd3299072bf311e50ebdc33d0c474ae302106e1900'
-            'ae0e6142841aba8f4bdccc40347f2669b06a10dabe7c4119ea074335b179ad11'
-            '54aa815f0d7e4a1370b94cf1e51c3ce84c38d6bdad66d7e2a41e56ed598efbd8'
-            'e160944ec154fa5caf43d2177396656c8561d1739df07510ce75c3b8ddafa3b3'
+            'aa3e45685b91c030a4fe59ef4de63503c13964a8ca9bd27100d45f23c8b00889'
+            '19e0abfd6f872341138b0ea0e7f38ad816dd4d6ed74abca810eab491380c93d8'
+            '0078b9cae84a06c1609f719da83bc1333b550447bdd9208de0f83ff00b375cea'
+            '670b43baf52b88ecd0963f7927f4b1d4500e1e8cc74cebedb7a76553d26f18b7'
+            '99593ceb02caecf33e39a8bdab496f7d07843ccb20f5399abb1676dcc986c71f'
+            'd024b26d7642fda15c096e4462c99a6b2ba5c3e9cc5eadc62496a0ea26a22fb3'
+            'ab42609f2a11a3b071d71d12675aa3eaee7c005b0ec4b6363f021cfea8e5c589'
+            'a6c3a9ac0474ecd33ddc6661b0fbd3c87528b14ef819a9abbf01ae29af3232f5'
             '175f5769b65092ccd746309d6dcf9637b430960cc895b15ff103f8455b117bed'
             '22304e9a08ef83f9165f329ee704e342971a5d781add852af782474d320caed9'
             'ef439cd62f980ac666d74b0eca4b83ea8355bc89d9f702507a097e1d53ee1393'
@@ -114,7 +121,7 @@ sha256sums=(SKIP
             'a52d561a66f774bfab2183f626d1eca003e69e40d5b1ef98a5e8fc2b1e4c4377'
             '3b5723d2dfee9343828f49228ccaaf490205e2588bb02b39d5171b5d7299b619'
             '85c59e96fa7aff425f05c3129679c707a324de9ff7870d11b977e2439c2c6463'
-            '7e332686ec26c09e0a0162047f3ec99e09cfa8bd1428f7acc8699b5646c46b67'
+            '2e67b6ed317d26b1817691c3a713312128174bb4ebcc6d7a70e96e0785801573'
             '4d65eeb635e98fb994fecf8cd5448e754c97c598eacea86852fb8930eaaadd08'
             '6f9e6b63f008118305f60253257bcbf28354594e84b7bd8fa3b5ca33dcd11872'
             '6168eaa35df0d363fbd7b5b86fca92b2aa63c2c06979932cf03a9531279773cc'
@@ -182,7 +189,7 @@ build() {
   # install -C leaves unchanged files and their timestamps alone.
   install -C -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c \
     pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c \
-    pico4_tcam.h pico4_tcam.c pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
+    pico4_tcam.h pico4_tcam.c pico4_tap.h pico4_tap.c pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
     pico4_controller.c pico4_fusion.h pico4_fusion.c pico4_ctrack.h pico4_ctrack.cpp pico4_ctrack_types.hpp \
     pico4_ctrack_model.hpp pico4_ctrack_model.cpp pico4_ctrack_solve.hpp pico4_ctrack_solve.cpp \
     pico4_ctrack_init.hpp pico4_ctrack_init.cpp pico4_ctrack_blob.hpp pico4_ctrack_blob.cpp pico4_ctrack_imu.hpp \
@@ -204,6 +211,8 @@ build() {
   ${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror -Imonado/src/xrt/include -o test_pico4_fusion test_pico4_fusion.c \
     pico4_fusion.c -lm
   ./test_pico4_fusion
+  ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_tap test_pico4_tap.c pico4_tap.c -lm
+  ./test_pico4_tap
   ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_lens_panel test_pico4_lens_panel.c -lm
   ./test_pico4_lens_panel
   ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_settings test_pico4_settings.c -lm
@@ -251,6 +260,7 @@ build() {
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-cam pico4-cam.c \
     pico4_cam.c pico4_station.c pico4_ssc.c -lpthread
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-roomview pico4-roomview.c -lvulkan -ldl -lm
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-tap-replay pico4-tap-replay.c pico4_tap.c -lm
   ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -isystem monado/src/external/openvr_includes \
     $(pkg-config --cflags pangocairo fontconfig) -o overpressure-settings overpressure-settings.cpp \
     $(pkg-config --libs pangocairo fontconfig) -lcairo -lvulkan -ldl -lm
@@ -285,7 +295,8 @@ package() {
   ln -s /opt/steamvr/resources/input/default_pico_controller_remapping.json "$input/default_pico_controller_remapping.json"
   install -Dm755 overpressure-settings pico4-onboarding pico4-steamvr-switch -t "$pkgdir/usr/bin"
   install -Dm644 pico4-onboarding.strings "$pkgdir/usr/share/pico4/onboarding.strings"
-  install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam pico4-ctrack-replay pico4-roomview -t "$pkgdir/usr/bin"
+  install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam pico4-ctrack-replay pico4-roomview \
+    pico4-tap-replay -t "$pkgdir/usr/bin"
   # The loader's system-wide active runtime.
   install -dm755 "$pkgdir/etc/openxr/1"
   ln -s /usr/share/openxr/1/openxr_monado.json "$pkgdir/etc/openxr/1/active_runtime.json"

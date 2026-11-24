@@ -124,6 +124,13 @@ typedef bool (*pico4_passthrough_pose_fn)(void *ctx, int64_t timestamp_ns, doubl
 bool
 pico4_passthrough_export(struct pico4_passthrough *p, const char *path, pico4_passthrough_pose_fn pose, void *ctx);
 
+/*!
+ * The wearer double-tapped the headset at @p now_ns (pico4_tap.h): counted in the room view's
+ * shared memory for pico4-roomview to switch it. Nothing without the export.
+ */
+void
+pico4_passthrough_note_tap(struct pico4_passthrough *p, int64_t now_ns);
+
 //! Turns one raw image upright (pico4_tcam_upright's @p turn) into 8 bits: black level 16 off, times @p gain.
 void
 pico4_passthrough_convert(const uint16_t *src, uint32_t src_stride, int turn, float gain, uint8_t *dst,

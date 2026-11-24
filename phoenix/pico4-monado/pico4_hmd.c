@@ -33,6 +33,7 @@
 #include "pico4_slam.h"
 #include "pico4_ssc.h"
 #include "pico4_station.h"
+#include "pico4_tap.h"
 
 #include "xrt/xrt_defines.h"
 #include "xrt/xrt_device.h"
@@ -97,6 +98,11 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_predict_ms, "PICO4_PREDICT_MS", 12)
  * lying still.
  */
 DEBUG_GET_ONCE_NUM_OPTION(pico4_latency_probe_ms, "PICO4_LATENCY_PROBE_MS", 0)
+/*!
+ * The wearer's double tap on the headset switches SteamVR's room view, as on PICO OS
+ * (pico4_tap.h, pico4_roomview.h).
+ */
+DEBUG_GET_ONCE_BOOL_OPTION(pico4_double_tap, "PICO4_DOUBLE_TAP", true)
 //! Test of the runaway path: reset the SLAM tracker once, this many seconds after the fusion started.
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_reset_after_s, "PICO4_SLAM_RESET_AFTER_S", 0)
 //! Directory for fusion_slam.csv (each SLAM pose) and fusion_pose.csv (each pose handed out).
@@ -186,6 +192,9 @@ struct pico4_hmd
 	struct xrt_vec3 last_accel;
 	float last_accel_raw[3];
 	bool have_accel;
+	//! The wearer's double tap on the headset (pico4_tap.h), fed on the IMU thread.
+	struct pico4_tap tap;
+	bool double_tap;
 
 	//! Visual-inertial tracking, NULL when unavailable.
 	struct pico4_slam *slam;
@@ -505,6 +514,17 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 		memcpy(h->last_accel_raw, s->values, sizeof(h->last_accel_raw));
 		h->have_accel = true;
 		h->accel_samples++;
+		/*
+		 * As on PICO OS, a double tap on the headset switches the passthrough. The detector follows
+		 * the accelerometer whether or not the headset is worn, so that it rests by the time the
+		 * headset is on; a double tap counts only while it is worn, and pico4-roomview switches the
+		 * room view for it (pico4_roomview.h).
+		 */
+		if (h->double_tap && pico4_tap_feed(&h->tap, ts, v.x, v.y, v.z) &&
+		    __atomic_load_n(&h->worn, __ATOMIC_RELAXED) == 1) {
+			P4_INFO(h, "Double tap on the headset");
+			pico4_passthrough_note_tap(pico4_slam_passthrough(h->slam), (int64_t)os_monotonic_get_ns());
+		}
 		return;
 	}
 	if (!suid_equal(&s->suid, &h->gyro_suid) || !h->have_accel) {
@@ -1348,6 +1368,8 @@ pico4_hmd_create(void)
 	    (enum u_device_alloc_flags)(U_DEVICE_ALLOC_HMD | U_DEVICE_ALLOC_TRACKING_NONE);
 	struct pico4_hmd *h = U_DEVICE_ALLOCATE(struct pico4_hmd, flags, 1, 0);
 	h->log_level = debug_get_log_option_pico4_log();
+	h->double_tap = debug_get_bool_option_pico4_double_tap();
+	pico4_tap_init(&h->tap, &pico4_tap_default_config);
 	h->temperature_c = NAN;
 	h->worn = -1;
 

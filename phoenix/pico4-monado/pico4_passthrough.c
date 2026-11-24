@@ -43,7 +43,10 @@ struct pico4_passthrough
 	struct pico4_passthrough_frame frame;
 	float gain;
 
-	//! The room view's export (pico4_passthrough_export).
+	/*!
+	 * The room view's shared memory (pico4_passthrough_export): set once the export runs, and read
+	 * from then on by the IMU thread (pico4_passthrough_note_tap), so atomically.
+	 */
 	struct pico4_roomview *roomview;
 	pthread_t export_thread;
 	bool exporting, export_stop;
@@ -366,8 +369,10 @@ pico4_passthrough_export(struct pico4_passthrough *p, const char *path, pico4_pa
 	// Kept in place across starts (pico4-roomview keeps its mapping); a new generation each start.
 	uint32_t generation = rv->magic == PICO4_ROOMVIEW_MAGIC ? rv->generation + 1 : 1;
 	__atomic_store_n(&rv->magic, 0, __ATOMIC_RELEASE);
-	rv->version = 2;
+	rv->version = 3;
 	rv->generation = generation;
+	rv->taps = 0;
+	rv->last_tap_ns = 0;
 	rv->format = p->rgb ? PICO4_ROOMVIEW_FORMAT_NV12 : PICO4_ROOMVIEW_FORMAT_GREY;
 	rv->width = info->width;
 	rv->height = info->height;
@@ -383,17 +388,32 @@ pico4_passthrough_export(struct pico4_passthrough *p, const char *path, pico4_pa
 		rv->frames[i].sequence = 0;
 	}
 	__atomic_store_n(&rv->magic, PICO4_ROOMVIEW_MAGIC, __ATOMIC_RELEASE);
-	p->roomview = rv;
+	__atomic_store_n(&p->roomview, rv, __ATOMIC_RELEASE);
 	p->pose = pose;
 	p->pose_ctx = ctx;
 	p->export_stop = false;
 	if (pthread_create(&p->export_thread, NULL, export_run, p) != 0) {
+		__atomic_store_n(&p->roomview, NULL, __ATOMIC_RELEASE);
 		munmap(rv, sizeof(*rv));
-		p->roomview = NULL;
 		return false;
 	}
 	p->exporting = true;
 	return true;
+}
+
+void
+pico4_passthrough_note_tap(struct pico4_passthrough *p, int64_t now_ns)
+{
+	if (p == NULL) {
+		return;
+	}
+	struct pico4_roomview *rv = __atomic_load_n(&p->roomview, __ATOMIC_ACQUIRE);
+	if (rv == NULL) {
+		return;
+	}
+	// The time first: a reader that sees the new count then finds this time with it.
+	__atomic_store_n(&rv->last_tap_ns, now_ns, __ATOMIC_RELEASE);
+	__atomic_fetch_add(&rv->taps, 1u, __ATOMIC_RELEASE);
 }
 
 void
@@ -671,7 +691,10 @@ pico4_passthrough_destroy(struct pico4_passthrough **pp)
 	if (p->exporting) {
 		__atomic_store_n(&p->export_stop, true, __ATOMIC_RELEASE);
 		pthread_join(p->export_thread, NULL);
-		munmap(p->roomview, sizeof(*p->roomview));
+		struct pico4_roomview *rv = __atomic_exchange_n(&p->roomview, NULL, __ATOMIC_ACQ_REL);
+		if (rv != NULL) {
+			munmap(rv, sizeof(*rv));
+		}
 	}
 	pthread_mutex_destroy(&p->lock);
 	pthread_cond_destroy(&p->cond);

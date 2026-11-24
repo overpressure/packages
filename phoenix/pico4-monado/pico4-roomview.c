@@ -13,6 +13,11 @@
  * asks for frames. The interface's layout is this project's own description of it
  * (docs/xr.md#passthrough); nothing of Valve's is linked: libopenvr_api.so is opened at run time.
  *
+ * The wearer's double tap on the headset switches the room view, as on PICO OS: the driver counts
+ * the double taps in the shared memory, and this tells the compositor's system layer by the
+ * mailbox message of the dashboard's camera button (pico4-steamvr-switch roomview). Not while the
+ * first-run setup, pico4-onboarding, runs.
+ *
  *   pico4-roomview [--frames N] [--test-pattern]
  *
  * --test-pattern publishes colour bars as NV12 in place of the cameras' images, with the left
@@ -41,6 +46,10 @@
 #define OPENVR_API "/opt/steamvr/bin/linuxarm64/libopenvr_api.so"
 #define INTERFACE "IVRCameraPassthroughInternal_001"
 #define COMPOSITOR_INTERFACE "IVRCompositor_029"
+#define MAILBOX_INTERFACE "IVRMailbox_002"
+#define MAILBOX_TO "vrcompositor_systemlayer"
+//! The first-run setup's process as /proc names it: comm holds the first 15 characters of pico4-onboarding.
+#define SETUP_PROCESS "pico4-onboardin"
 #define APPLICATION_BACKGROUND 3
 #define GRAPHICS_VULKAN 2
 #define BLOCK 0 //!< The frame block of the plain camera view (the other one is for a second mode).
@@ -61,6 +70,14 @@ enum slot
 	SLOT_SET_STATE = 10,
 	SLOT_SET_PAUSED = 12,
 	SLOT_RELEASE = 14,
+};
+
+//! vrclient's mailbox client, as pico4-steamvr-switch uses it; every call takes the client first.
+enum mailbox_slot
+{
+	SLOT_MAILBOX_OPEN = 0,  //!< (name, handle out, a third string, NULL here): a mailbox of this client.
+	SLOT_MAILBOX_CLOSE = 1, //!< (handle)
+	SLOT_MAILBOX_SEND = 2,  //!< (handle, to, json)
 };
 
 enum frame_status
@@ -149,6 +166,9 @@ typedef uint32_t (*set_frame_metadata_fn)(void *, uint32_t, uint32_t, uint32_t, 
 typedef void (*set_state_fn)(void *, const struct view_state *);
 typedef void (*set_paused_fn)(void *, bool);
 typedef void (*release_fn)(void *);
+typedef uint32_t (*mailbox_open_fn)(void *, const char *, uint64_t *, const char *);
+typedef uint32_t (*mailbox_close_fn)(void *, uint64_t);
+typedef uint32_t (*mailbox_send_fn)(void *, uint64_t, const char *, const char *);
 
 #define CALL(obj, slot, type) ((type)((*(void ***)(obj))[slot]))
 
@@ -224,12 +244,18 @@ find_process(const char *name)
 	return found;
 }
 
-//! The driver's shared memory, once vrserver's driver has created it.
+//! The driver's shared memory, once vrserver's driver has created it; NULL until it is complete.
 static struct pico4_roomview *
 map_roomview(void)
 {
 	int fd = open(PICO4_ROOMVIEW_PATH, O_RDWR | O_CLOEXEC);
 	if (fd < 0) {
+		return NULL;
+	}
+	struct stat st;
+	// A driver from before the double taps were counted wrote a shorter file: not mapped past its end.
+	if (fstat(fd, &st) != 0 || st.st_size < (off_t)sizeof(struct pico4_roomview)) {
+		close(fd);
 		return NULL;
 	}
 	struct pico4_roomview *rv = mmap(NULL, sizeof(*rv), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -607,6 +633,29 @@ newest_frame(struct pico4_roomview *rv, uint64_t after, struct pico4_roomview_fr
 	return true;
 }
 
+//! One message to the compositor's system layer, as the dashboard's camera button sends it; false if
+//! it did not leave.
+static bool
+tell_compositor(void *mailbox, bool on)
+{
+	static const char on_json[] = "{\"type\":\"set_camera_roomview_enabled\",\"enabled\":true}";
+	static const char off_json[] = "{\"type\":\"set_camera_roomview_enabled\",\"enabled\":false}";
+	if (mailbox == NULL) {
+		return false;
+	}
+	uint64_t handle = 0;
+	const uint32_t opened = CALL(mailbox, SLOT_MAILBOX_OPEN, mailbox_open_fn)(mailbox, "pico4roomview", &handle, NULL);
+	if (opened != 0) {
+		fprintf(stderr, "pico4-roomview: mailbox not opened: %u\n", opened);
+	}
+	const uint32_t sent = CALL(mailbox, SLOT_MAILBOX_SEND, mailbox_send_fn)(mailbox, handle, MAILBOX_TO,
+	                                                                        on ? on_json : off_json);
+	if (handle != 0) {
+		CALL(mailbox, SLOT_MAILBOX_CLOSE, mailbox_close_fn)(mailbox, handle);
+	}
+	return sent == 0;
+}
+
 //! Sets the frames up with the compositor; false if it does not take them (yet).
 static bool
 setup_frames(void *pt, const struct frames_desc *desc, const struct dmabuf_attributes *attrs)
@@ -657,7 +706,14 @@ main(int argc, char **argv)
 		}
 		sleep_ms(500);
 	}
-	while (!stop && __atomic_load_n(&rv->magic, __ATOMIC_ACQUIRE) != PICO4_ROOMVIEW_MAGIC) {
+	for (int i = 0; !stop && __atomic_load_n(&rv->magic, __ATOMIC_ACQUIRE) != PICO4_ROOMVIEW_MAGIC; i++) {
+		if (i == 120) { // the driver sets its magic last
+			const uint64_t magic = __atomic_load_n(&rv->magic, __ATOMIC_ACQUIRE);
+			if (magic != 0) {
+				fprintf(stderr, "pico4-roomview: %s holds %.*s, another version's: restart the session\n",
+				        PICO4_ROOMVIEW_PATH, 8, (const char *)&magic);
+			}
+		}
 		sleep_ms(100);
 	}
 	if (stop) {
@@ -710,6 +766,11 @@ main(int argc, char **argv)
 		fprintf(stderr, "pico4-roomview: no %s: %d\n", INTERFACE, err);
 		vr_shutdown();
 		return 1;
+	}
+	void *mailbox = vr_interface(MAILBOX_INTERFACE, &err);
+	if (mailbox == NULL) {
+		fprintf(stderr, "pico4-roomview: no %s: %d: a double tap does not switch the room view\n", MAILBOX_INTERFACE,
+		        err);
 	}
 
 	struct vulkan vk = {0};
@@ -783,6 +844,8 @@ main(int argc, char **argv)
 
 	uint64_t last = 0, published = 0, skipped = 0;
 	bool was_requested = false;
+	struct pico4_roomview_switch switched = {.shown = false, .told_ns = 0};
+	uint32_t generation = 0, taps = 0;
 	pid_t compositor = 0;
 	int64_t report_at = monotonic_ns() + 10000000000ll, check_at = 0, raw_offset = raw_offset_ns();
 	static struct pico4_roomview_frame frame;
@@ -815,13 +878,39 @@ main(int argc, char **argv)
 			sleep_ms(100);
 			continue;
 		}
+		const int64_t now = monotonic_ns();
 		bool requested = false;
 		CALL(pt, SLOT_IS_REQUESTED, is_requested_fn)(pt, BLOCK, &requested);
-		__atomic_store_n(&rv->producer_ns, monotonic_ns(), __ATOMIC_RELEASE);
+		__atomic_store_n(&rv->producer_ns, now, __ATOMIC_RELEASE);
 		__atomic_store_n(&rv->requested, requested ? 1u : 0u, __ATOMIC_RELEASE);
 		if (requested != was_requested) {
 			fprintf(stderr, "pico4-roomview: room view %s\n", requested ? "requested" : "no longer requested");
 			was_requested = requested;
+		}
+		if (rv->generation != generation) {
+			// A driver that started again counts its double taps from zero.
+			generation = rv->generation;
+			taps = __atomic_load_n(&rv->taps, __ATOMIC_ACQUIRE);
+		}
+		if (pico4_roomview_switch_follow(&switched, requested, now) == PICO4_ROOMVIEW_REFUSED) {
+			fprintf(stderr, "pico4-roomview: the compositor did not switch the room view\n");
+		}
+		const uint32_t tapped = __atomic_load_n(&rv->taps, __ATOMIC_ACQUIRE);
+		if (tapped != taps) {
+			taps = tapped;
+			if (find_process(SETUP_PROCESS) != 0) {
+				fprintf(stderr, "pico4-roomview: double tap under the first-run setup: not switched\n");
+			} else if (__atomic_load_n(&rv->last_tap_ns, __ATOMIC_ACQUIRE) + PICO4_ROOMVIEW_TAP_FRESH_NS < now) {
+				fprintf(stderr, "pico4-roomview: double tap without the compositor: not switched\n");
+			} else {
+				const bool on = pico4_roomview_switch_toggle(&switched, now);
+				if (tell_compositor(mailbox, on)) {
+					fprintf(stderr, "pico4-roomview: double tap: room view %s\n", on ? "on" : "off");
+				} else {
+					pico4_roomview_switch_toggle(&switched, 0); // back to what the compositor shows
+					fprintf(stderr, "pico4-roomview: double tap: the compositor not told\n");
+				}
+			}
 		}
 		if (!requested || !newest_frame(rv, last, &frame)) {
 			sleep_ms(requested ? 2 : 50);

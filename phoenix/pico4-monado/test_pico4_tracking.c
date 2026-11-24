@@ -735,8 +735,27 @@ test_roomview(void)
 	struct pico4_roomview *rv = mmap(NULL, sizeof(*rv), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	close(fd);
 	EXPECT(rv != MAP_FAILED);
-	EXPECT(rv->magic == PICO4_ROOMVIEW_MAGIC && rv->version == 2 && rv->generation == 1);
+	EXPECT(rv->magic == PICO4_ROOMVIEW_MAGIC && rv->version == 3 && rv->generation == 1);
 	EXPECT(rv->format == PICO4_ROOMVIEW_FORMAT_GREY);
+	// The wearer's double taps, counted for pico4-roomview: none, then two with the last one's time.
+	EXPECT(rv->taps == 0 && rv->last_tap_ns == 0);
+	pico4_passthrough_note_tap(NULL, 1);
+	pico4_passthrough_note_tap(p, 1234567891011ll);
+	pico4_passthrough_note_tap(p, 1234567891012ll);
+	EXPECT(rv->taps == 2 && rv->last_tap_ns == 1234567891012ll);
+	// What pico4-roomview knows of the room view between the compositor's answers.
+	struct pico4_roomview_switch switched = {.shown = false, .told_ns = 0};
+	EXPECT(pico4_roomview_switch_follow(&switched, false, 1000) == PICO4_ROOMVIEW_AGREES && !switched.shown);
+	EXPECT(pico4_roomview_switch_toggle(&switched, 1000) && switched.shown);
+	EXPECT(pico4_roomview_switch_follow(&switched, false, 1500) == PICO4_ROOMVIEW_WAITING && switched.shown);
+	EXPECT(!pico4_roomview_switch_toggle(&switched, 1700) && !switched.shown); // once more before its answer
+	EXPECT(pico4_roomview_switch_follow(&switched, true, 1800) == PICO4_ROOMVIEW_WAITING && !switched.shown);
+	EXPECT(pico4_roomview_switch_follow(&switched, false, 1900) == PICO4_ROOMVIEW_AGREES && !switched.shown);
+	EXPECT(switched.told_ns == 0);
+	EXPECT(pico4_roomview_switch_toggle(&switched, 5000) && switched.shown);
+	EXPECT(pico4_roomview_switch_follow(&switched, false, 5000 + PICO4_ROOMVIEW_AGREEMENT_NS) == PICO4_ROOMVIEW_WAITING);
+	EXPECT(pico4_roomview_switch_follow(&switched, false, 5001 + PICO4_ROOMVIEW_AGREEMENT_NS) == PICO4_ROOMVIEW_REFUSED);
+	EXPECT(!switched.shown && switched.told_ns == 0);
 	struct pico4_passthrough_info info;
 	pico4_passthrough_info(p, &info);
 	EXPECT(rv->width == info.width && rv->height == info.height && rv->fx[0] == info.fx[0]);
@@ -782,6 +801,7 @@ test_roomview(void)
 	rv = mmap(NULL, sizeof(*rv), PROT_READ, MAP_SHARED, fd, 0);
 	close(fd);
 	EXPECT(rv != MAP_FAILED && rv->generation == 2 && rv->frames[0].sequence == 0);
+	EXPECT(rv->taps == 0 && rv->last_tap_ns == 0);
 	munmap(rv, sizeof(*rv));
 	pico4_passthrough_destroy(&p);
 	unlink(path);
