@@ -85,8 +85,19 @@ test_ipd(void)
 	EXPECT(pico4_setup_ipd_step(6348, 0) == 6350);
 	EXPECT(pico4_setup_ipd_step(6348, 1) == 6400);
 	EXPECT(pico4_setup_ipd_step(6348, -1) == 6300);
-	EXPECT(pico4_setup_ipd_step(6200, -1) == 6200);
+	EXPECT(pico4_setup_ipd_step(6200, -1) == 6150);
+	EXPECT(pico4_setup_ipd_step(5800, -1) == 5800);
 	EXPECT(pico4_setup_ipd_step(7200, 1) == 7200);
+	// Closer than 62 mm only with the warning's box ticked, as on the settings' page.
+	bool refused;
+	EXPECT(pico4_setup_ipd_gate(6250, 6200, false, &refused) == 6200 && !refused);
+	EXPECT(pico4_setup_ipd_gate(6200, 6150, false, &refused) == 6200 && refused);
+	EXPECT(pico4_setup_ipd_gate(6050, 6000, false, &refused) == 6050 && refused);
+	EXPECT(pico4_setup_ipd_gate(6050, 6100, false, &refused) == 6100 && !refused);
+	EXPECT(pico4_setup_ipd_gate(6200, 6150, true, &refused) == 6150 && !refused);
+	EXPECT(pico4_setup_hit_warning(PICO4_SETUP_WARNING_X + 1, PICO4_SETUP_WARNING_Y + 1));
+	EXPECT(!pico4_setup_hit_warning(PICO4_SETUP_WARNING_X - 1, PICO4_SETUP_WARNING_Y + 1));
+	EXPECT(!pico4_setup_hit_warning(500, PICO4_SETUP_IPD_Y + 1));
 	EXPECT(pico4_setup_parse_ipd("63.48\n") == 6348);
 	EXPECT(pico4_setup_parse_ipd("error") == -1);
 	EXPECT(pico4_setup_parse_ipd("9.0") == -1);

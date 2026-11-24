@@ -170,6 +170,9 @@ struct Setup
 	bool keyboard = false; //!< SteamVR's keyboard is up for the field
 	int typed = 0;         //!< characters the keyboard sent since it came up
 	int ipd = -1, ipd_target = -1;
+	bool ipd_warning = false;   //!< the warning below 62 mm shows (pico4_setup_ipd_gate)
+	bool ipd_confirmed = false; //!< its box is ticked, until the page is entered again
+	bool pressed_warning = false;
 	std::string message;   //!< a page's note (the language's restart, a failure)
 	bool message_error = false;
 	int pressed_row = -1, pressed_arrow = 0, pressed_ipd = 0, pressed_field = 0;
@@ -641,8 +644,13 @@ draw_setup(cairo_t *c, const State &s, const Texts &t, double now)
 		}
 		cairo_set_source_rgb(c, 1, 1, 1);
 		pico4_text::draw(c, mm, 330, PICO4_SETUP_IPD_Y + 28, 340, 56, true, pico4_text::kCenter);
-		cairo_set_source_rgb(c, 0.65, 0.67, 0.70);
-		pico4_text::draw(c, t.our("setup_ipd_range"), kTextX, 380, kTextW, 22, false, pico4_text::kCenter);
+		if (u.ipd_warning) {
+			close_warning(c, t.our("lens_close_warning"), PICO4_SETUP_WARNING_X, PICO4_SETUP_WARNING_Y,
+			              PICO4_SETUP_WARNING_W, PICO4_SETUP_WARNING_H, u.ipd_confirmed, u.pressed_warning);
+		} else {
+			cairo_set_source_rgb(c, 0.65, 0.67, 0.70);
+			pico4_text::draw(c, t.our("setup_ipd_range"), kTextX, 380, kTextW, 22, false, pico4_text::kCenter);
+		}
 		break;
 	}
 	case PICO4_SETUP_READY:
@@ -734,6 +742,16 @@ render(const char *dir, const char *language)
 		u.setup.message = p.page == PICO4_SETUP_LANGUAGE ? t.our("setup_language_note") : "";
 		save(u, p.name);
 	}
+	// The lens page's warning below 62 mm, and with its box ticked.
+	u.setup.page = PICO4_SETUP_IPD;
+	u.setup.ipd = 6200;
+	u.setup.ipd_warning = true;
+	save(u, "setup-ipd-close");
+	u.setup.ipd = 6050;
+	u.setup.ipd_confirmed = true;
+	save(u, "setup-ipd-close-ticked");
+	u.setup.ipd = 6350;
+	u.setup.ipd_warning = u.setup.ipd_confirmed = false;
 	// The Wi-Fi page's steps past its list.
 	Setup &w = u.setup;
 	w.page = PICO4_SETUP_WIFI;
@@ -1081,6 +1099,8 @@ main(int argc, char **argv)
 			break;
 		case PICO4_SETUP_IPD:
 			u.ipd_target = -1;
+			// A new visit asks again before closer than 62 mm, as PICO OS's panel does.
+			u.ipd_warning = u.ipd_confirmed = false;
 			if (!u.ipd_job.running()) {
 				u.ipd_job.start({"pico4-lens"});
 			}
@@ -1182,7 +1202,13 @@ main(int argc, char **argv)
 		if (u.ipd < 0) {
 			return;
 		}
-		u.ipd_target = pico4_setup_ipd_step(u.ipd_target >= 0 ? u.ipd_target : u.ipd, steps);
+		const int from = u.ipd_target >= 0 ? u.ipd_target : u.ipd;
+		bool refused;
+		const int to = pico4_setup_ipd_gate(from, pico4_setup_ipd_step(from, steps), u.ipd_confirmed, &refused);
+		u.ipd_warning = refused || (u.ipd_warning && to <= PICO4_SETUP_IPD_CLOSE);
+		if (to != from) {
+			u.ipd_target = to;
+		}
 		dirty = true;
 	};
 
@@ -1234,6 +1260,7 @@ main(int argc, char **argv)
 				u.pressed_row = lists ? pico4_setup_hit_row(x, y) : -1;
 				u.pressed_arrow = lists ? pico4_setup_hit_arrow(x, y) : 0;
 				u.pressed_ipd = u.page == PICO4_SETUP_IPD ? pico4_setup_hit_ipd(x, y) : 0;
+				u.pressed_warning = u.page == PICO4_SETUP_IPD && u.ipd_warning && pico4_setup_hit_warning(x, y);
 				u.pressed_field = typing ? pico4_setup_hit_field(x, y) : 0;
 				if (u.pressed_field == 2 && u.wifi != PICO4_WIFI_PASSWORD) {
 					u.pressed_field = 0; // a name has no switch to show it
@@ -1242,13 +1269,17 @@ main(int argc, char **argv)
 			} else if (e.eventType == vr::VREvent_MouseButtonUp) {
 				const int was = s.pressed, was_row = u.pressed_row, was_arrow = u.pressed_arrow, was_ipd = u.pressed_ipd;
 				const int was_field = u.pressed_field;
+				const bool was_warning = u.pressed_warning;
 				s.pressed = PICO4_TOUR_NONE;
 				u.pressed_row = -1;
 				u.pressed_arrow = 0;
 				u.pressed_ipd = 0;
 				u.pressed_field = 0;
+				u.pressed_warning = false;
 				dirty = true;
-				if (was_field != 0 && typing && was_field == pico4_setup_hit_field(x, y)) {
+				if (was_warning && u.ipd_warning && pico4_setup_hit_warning(x, y)) {
+					u.ipd_confirmed = !u.ipd_confirmed;
+				} else if (was_field != 0 && typing && was_field == pico4_setup_hit_field(x, y)) {
 					if (was_field == 1 && !u.keyboard) {
 						keyboard(true);
 					} else if (was_field == 2) {

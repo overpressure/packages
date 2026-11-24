@@ -25,22 +25,44 @@ int
 main(void)
 {
 	// What a press hits.
-	EXPECT(pico4_panel_hit(50, 200) == PICO4_PANEL_MINUS);
-	EXPECT(pico4_panel_hit(750, 200) == PICO4_PANEL_PLUS);
-	EXPECT(pico4_panel_hit(400, 230) == PICO4_PANEL_SLIDER);
-	EXPECT(pico4_panel_hit(100, 350) == PICO4_PANEL_PRESET0);
-	EXPECT(pico4_panel_hit(300, 350) == PICO4_PANEL_PRESET0 + 1);
-	EXPECT(pico4_panel_hit(700, 350) == PICO4_PANEL_PRESET0 + 3);
-	EXPECT(pico4_panel_hit(205, 350) == PICO4_PANEL_NONE); // between two presets
-	EXPECT(pico4_panel_hit(780, 350) == PICO4_PANEL_NONE);
-	EXPECT(pico4_panel_hit(400, 100) == PICO4_PANEL_NONE);
+	EXPECT(pico4_panel_hit(50, 200, false) == PICO4_PANEL_MINUS);
+	EXPECT(pico4_panel_hit(750, 200, false) == PICO4_PANEL_PLUS);
+	EXPECT(pico4_panel_hit(400, 230, false) == PICO4_PANEL_SLIDER);
+	EXPECT(pico4_panel_hit(100, 350, false) == PICO4_PANEL_PRESET0);
+	EXPECT(pico4_panel_hit(300, 350, false) == PICO4_PANEL_PRESET0 + 1);
+	EXPECT(pico4_panel_hit(700, 350, false) == PICO4_PANEL_PRESET0 + 3);
+	EXPECT(pico4_panel_hit(205, 350, false) == PICO4_PANEL_NONE); // between two presets
+	EXPECT(pico4_panel_hit(780, 350, false) == PICO4_PANEL_NONE);
+	EXPECT(pico4_panel_hit(400, 100, false) == PICO4_PANEL_NONE);
+	// The warning takes the presets' row while it shows; the row above stays.
+	EXPECT(pico4_panel_hit(100, 350, true) == PICO4_PANEL_WARNING);
+	EXPECT(pico4_panel_hit(205, 350, true) == PICO4_PANEL_WARNING);
+	EXPECT(pico4_panel_hit(780, 350, true) == PICO4_PANEL_NONE);
+	EXPECT(pico4_panel_hit(50, 200, true) == PICO4_PANEL_MINUS);
 
-	// The slider's scale.
-	EXPECT(pico4_panel_slider_mm(PICO4_PANEL_SLIDER_X0) == 62.0);
+	// The slider's scale: PICO OS's 58 to 72 mm.
+	EXPECT(pico4_panel_slider_mm(PICO4_PANEL_SLIDER_X0) == 58.0);
 	EXPECT(pico4_panel_slider_mm(PICO4_PANEL_SLIDER_X1) == 72.0);
-	EXPECT(pico4_panel_slider_mm(0) == 62.0 && pico4_panel_slider_mm(800) == 72.0);
-	EXPECT(fabs(pico4_panel_slider_x(67.0) - (PICO4_PANEL_SLIDER_X0 + PICO4_PANEL_SLIDER_X1) / 2) < 1e-9);
-	EXPECT(pico4_panel_clamp(50) == 62.0 && pico4_panel_clamp(80) == 72.0 && pico4_panel_clamp(63.5) == 63.5);
+	EXPECT(pico4_panel_slider_mm(0) == 58.0 && pico4_panel_slider_mm(800) == 72.0);
+	EXPECT(fabs(pico4_panel_slider_x(65.0) - (PICO4_PANEL_SLIDER_X0 + PICO4_PANEL_SLIDER_X1) / 2) < 1e-9);
+	EXPECT(pico4_panel_clamp(50) == 58.0 && pico4_panel_clamp(80) == 72.0 && pico4_panel_clamp(63.5) == 63.5);
+
+	// Closer than 62 mm only with the warning's box ticked; wider always goes.
+	bool refused;
+	EXPECT(pico4_panel_gate(64.0, 63.5, false, &refused) == 63.5 && !refused);
+	EXPECT(pico4_panel_gate(62.5, 62.0, false, &refused) == 62.0 && !refused);
+	EXPECT(pico4_panel_gate(62.0, 61.5, false, &refused) == 62.0 && refused);  // held at 62, warned
+	EXPECT(pico4_panel_gate(65.0, 59.0, false, &refused) == 62.0 && refused);  // a preset or the slider: stops at 62
+	EXPECT(pico4_panel_gate(60.0, 59.5, false, &refused) == 60.0 && refused);  // closer already: stays, never wider
+	EXPECT(pico4_panel_gate(60.0, 60.5, false, &refused) == 60.5 && !refused); // wider from below 62
+	EXPECT(pico4_panel_gate(62.0, 61.5, true, &refused) == 61.5 && !refused);
+	EXPECT(pico4_panel_gate(58.5, 57.0, true, &refused) == 58.0 && !refused); // the range's end
+	// The warning: from a refused move until the lenses go beyond 62 mm.
+	EXPECT(pico4_panel_warning_after(false, true, 62.0));
+	EXPECT(pico4_panel_warning_after(true, false, 61.5));
+	EXPECT(pico4_panel_warning_after(true, false, 62.0));
+	EXPECT(!pico4_panel_warning_after(true, false, 62.5));
+	EXPECT(!pico4_panel_warning_after(false, false, 61.0));
 
 	// Presets across a restart; anything out of range is an empty one.
 	char path[] = "test_pico4_presets_XXXXXX";

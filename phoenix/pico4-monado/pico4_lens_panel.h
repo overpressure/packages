@@ -11,7 +11,12 @@
 
 #define PICO4_PANEL_W 800
 #define PICO4_PANEL_H 500
-#define PICO4_PANEL_MM_MIN 62.0
+/*
+ * PICO OS's range (its settings' lens distance): 58 to 72 mm, closer than 62 only once the warning's box
+ * is ticked, which closing the page clears. The motor stops by itself at 59.4 to 59.9 mm.
+ */
+#define PICO4_PANEL_MM_MIN 58.0
+#define PICO4_PANEL_MM_CLOSE 62.0
 #define PICO4_PANEL_MM_MAX 72.0
 #define PICO4_PANEL_STEP_MM 0.5
 #define PICO4_PANEL_PRESETS 4
@@ -24,6 +29,7 @@ enum pico4_panel_widget
 	PICO4_PANEL_MINUS = PICO4_PANEL_PRESETS,
 	PICO4_PANEL_PLUS,
 	PICO4_PANEL_SLIDER,
+	PICO4_PANEL_WARNING, //!< The warning below 62 mm, in the presets' row while it shows: its box.
 };
 
 // In the panel's pixels, y down.
@@ -39,9 +45,14 @@ enum pico4_panel_widget
 #define PICO4_PANEL_ROW2_Y 310.0
 #define PICO4_PANEL_ROW2_H 110.0
 
+//! What a press at (@p x, @p y) hits; while the @p warning shows, it takes the presets' row.
 static inline enum pico4_panel_widget
-pico4_panel_hit(double x, double y)
+pico4_panel_hit(double x, double y, bool warning)
 {
+	if (warning && y >= PICO4_PANEL_ROW2_Y && y < PICO4_PANEL_ROW2_Y + PICO4_PANEL_ROW2_H && x >= PICO4_PANEL_PRESET_X0 &&
+	    x < PICO4_PANEL_W - PICO4_PANEL_PRESET_X0) {
+		return PICO4_PANEL_WARNING;
+	}
 	if (y >= PICO4_PANEL_ROW1_Y && y < PICO4_PANEL_ROW1_Y + PICO4_PANEL_ROW1_H) {
 		if (x >= PICO4_PANEL_BUTTON_X0 && x < PICO4_PANEL_BUTTON_X0 + PICO4_PANEL_BUTTON_W) {
 			return PICO4_PANEL_MINUS;
@@ -67,6 +78,29 @@ static inline double
 pico4_panel_clamp(double mm)
 {
 	return mm < PICO4_PANEL_MM_MIN ? PICO4_PANEL_MM_MIN : mm > PICO4_PANEL_MM_MAX ? PICO4_PANEL_MM_MAX : mm;
+}
+
+/*!
+ * Where a move from @p from to @p mm goes: within the range, and closer than 62 mm only when the warning's
+ * box is @p confirmed. A move closer that would end below 62 stops at 62, or stays where the lenses are
+ * when they are closer already; *@p refused says so (PICO OS shows its warning then). Wider always goes.
+ */
+static inline double
+pico4_panel_gate(double from, double mm, bool confirmed, bool *refused)
+{
+	mm = pico4_panel_clamp(mm);
+	*refused = !confirmed && mm < PICO4_PANEL_MM_CLOSE && mm < from;
+	if (!*refused) {
+		return mm;
+	}
+	return from > PICO4_PANEL_MM_CLOSE ? PICO4_PANEL_MM_CLOSE : from;
+}
+
+//! Whether the warning shows after a move to @p mm: from a refused one until the lenses go beyond 62 mm.
+static inline bool
+pico4_panel_warning_after(bool shown, bool refused, double mm)
+{
+	return refused || (shown && mm <= PICO4_PANEL_MM_CLOSE);
 }
 
 //! The slider's value at @p x, in steps of 0.1 mm.

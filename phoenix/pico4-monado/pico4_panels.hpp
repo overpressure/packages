@@ -22,6 +22,42 @@
 
 namespace pico4_panels {
 
+/*!
+ * The warning below 62 mm in the box at (@p x, @p y, @p w, @p h): a check box, ticked when @p checked, and
+ * @p text beside it, as large as fits (as PICO OS's settings show it, the box in the warning itself).
+ */
+inline void
+close_warning(cairo_t *c, const std::string &text, double x, double y, double w, double h, bool checked, bool pressed)
+{
+	pico4_overlay::rounded(c, x, y, w, h, 12);
+	cairo_set_source_rgb(c, pressed ? 0.42 : 0.34, pressed ? 0.30 : 0.24, 0.10);
+	cairo_fill(c);
+	const double box = 30, bx = x + 16, by = y + (h - box) / 2;
+	pico4_overlay::rounded(c, bx, by, box, box, 6);
+	if (checked) {
+		cairo_set_source_rgb(c, 0.96, 0.72, 0.26);
+		cairo_fill(c);
+		cairo_set_source_rgb(c, 0.13, 0.10, 0.04);
+		cairo_set_line_width(c, 4);
+		cairo_move_to(c, bx + 7, by + 16);
+		cairo_line_to(c, bx + 13, by + 22);
+		cairo_line_to(c, bx + 24, by + 9);
+		cairo_stroke(c);
+	} else {
+		cairo_set_source_rgb(c, 0.96, 0.72, 0.26);
+		cairo_set_line_width(c, 3);
+		cairo_stroke(c);
+	}
+	const double tx = bx + box + 16, tw = x + w - 16 - tx;
+	double size = 22;
+	while (size > 14 && pico4_text::draw(c, text, tx, 0, tw, size, false, pico4_text::kStart, true) > h - 12) {
+		size -= 1;
+	}
+	const double tall = pico4_text::draw(c, text, tx, 0, tw, size, false, pico4_text::kStart, true);
+	cairo_set_source_rgb(c, 0.98, 0.90, 0.74);
+	pico4_text::draw(c, text, tx, y + (h - tall) / 2, tw, size, false);
+}
+
 inline std::string
 home_path(const char *rest)
 {

@@ -7,8 +7,9 @@
  *
  * - Lens distance. The lenses have no wheel, and SteamVR shows the IPD when it changes but has no
  *   control that sets it: a slider, buttons for half a millimetre, and four presets for people
- *   taking turns (a press moves the lenses, holding one stores the distance in it). pico4-lens
- *   moves the lenses, and the driver hands the new distance to SteamVR.
+ *   taking turns (a press moves the lenses, holding one stores the distance in it), from 58 to 72 mm
+ *   as on PICO OS: closer than 62 mm only after its warning's box is ticked (pico4_panel_gate).
+ *   pico4-lens moves the lenses, and the driver hands the new distance to SteamVR.
  * - Controllers. SteamVR cannot pair the PICO 4's controllers: each one's state, and Pair for a
  *   missing one, through the driver's pairing socket (pico4_station.h), while the page says what
  *   to press. With no controller connected 20 s after the start, the laser cannot reach anything:
@@ -61,6 +62,9 @@ struct Lenses
 	const char *message = nullptr; //!< a failure's text key
 	pid_t mover = -1;
 	double pending = 0; //!< A move asked for while another one runs.
+	bool warning = false;   //!< The warning below 62 mm shows (pico4_panel_warning_after).
+	bool confirmed = false; //!< Its box is ticked: closer than 62 mm goes, until the page closes.
+	double drag_from = 0;   //!< Where the slider's drag started; 0: no drag.
 };
 
 struct Controllers
@@ -114,6 +118,18 @@ start_move(Lenses &l, double mm)
 	l.mover = pid;
 	l.target = mm;
 	l.message = nullptr;
+}
+
+//! A move from @p from to @p mm through the gate below 62 mm: held there, it shows the warning instead.
+void
+request_move(Lenses &l, double from, double mm)
+{
+	bool refused;
+	const double to = pico4_panel_gate(from, mm, l.confirmed, &refused);
+	l.warning = pico4_panel_warning_after(l.warning, refused, to);
+	if (fabs(to - from) >= 0.01) {
+		start_move(l, to);
+	}
 }
 
 //! True when the move ended in this call.
@@ -194,10 +210,13 @@ draw_lenses(cairo_t *c, const Lenses &l, const Texts &t)
 	centred(c, "\xE2\x88\x92", PICO4_PANEL_BUTTON_X0, row, w, h, 52, true);
 	centred(c, "+", plus_x, row, w, h, 52, true);
 
-	// The slider: a track, its filled part and a knob at the distance.
-	const double track = row + h / 2;
+	// The slider: a track, an amber bar under its part below 62 mm, its filled part and a knob at the distance.
+	const double track = row + h / 2, close_x = pico4_panel_slider_x(PICO4_PANEL_MM_CLOSE);
 	rounded(c, PICO4_PANEL_SLIDER_X0, track - 5, PICO4_PANEL_SLIDER_X1 - PICO4_PANEL_SLIDER_X0, 10, 5);
 	cairo_set_source_rgb(c, 0.30, 0.33, 0.37);
+	cairo_fill(c);
+	rounded(c, PICO4_PANEL_SLIDER_X0, track + 11, close_x - PICO4_PANEL_SLIDER_X0, 5, 2.5);
+	cairo_set_source_rgb(c, 0.85, 0.60, 0.20);
 	cairo_fill(c);
 	if (shown > 0) {
 		const double knob = pico4_panel_slider_x(shown);
@@ -209,10 +228,17 @@ draw_lenses(cairo_t *c, const Lenses &l, const Texts &t)
 		cairo_fill(c);
 	}
 	colour(c, kDim);
-	centred(c, "62", PICO4_PANEL_SLIDER_X0 - 22, row + h - 4, 60, 24, 18, false);
+	centred(c, "58", PICO4_PANEL_SLIDER_X0 - 22, row + h - 4, 60, 24, 18, false);
+	centred(c, "62", close_x - 30, row + h - 4, 60, 24, 18, false);
 	centred(c, "72", PICO4_PANEL_SLIDER_X1 - 38, row + h - 4, 60, 24, 18, false);
 
-	for (int i = 0; i < PICO4_PANEL_PRESETS; i++) {
+	// Below 62 mm, PICO OS's warning with its box, in the presets' row.
+	if (l.warning) {
+		close_warning(c, t.our("lens_close_warning"), PICO4_PANEL_PRESET_X0, PICO4_PANEL_ROW2_Y,
+		              PICO4_PANEL_W - 2 * PICO4_PANEL_PRESET_X0, PICO4_PANEL_ROW2_H, l.confirmed,
+		              l.pressed == PICO4_PANEL_WARNING);
+	}
+	for (int i = 0; i < PICO4_PANEL_PRESETS && !l.warning; i++) {
 		const double x = PICO4_PANEL_PRESET_X0 + i * (PICO4_PANEL_PRESET_W + PICO4_PANEL_PRESET_GAP);
 		const double y = PICO4_PANEL_ROW2_Y;
 		const bool here = l.presets[i] > 0 && shown > 0 && fabs(l.presets[i] - shown) < 0.15;
@@ -238,8 +264,11 @@ draw_lenses(cairo_t *c, const Lenses &l, const Texts &t)
 	} else {
 		colour(c, kDim);
 	}
-	pico4_text::draw(c, t.our(l.message != nullptr ? l.message : "lens_hint"), 30, 440, PICO4_PANEL_W - 60, 22, false,
-	                 pico4_text::kCenter);
+	// The presets' hint only with the presets.
+	if (l.message != nullptr || !l.warning) {
+		pico4_text::draw(c, t.our(l.message != nullptr ? l.message : "lens_hint"), 30, 440, PICO4_PANEL_W - 60, 22, false,
+		                 pico4_text::kCenter);
+	}
 }
 
 //! The controllers' page, in the page's pixels; @p close for the panel in front of the wearer.
@@ -377,37 +406,50 @@ lenses_event(Lenses &l, const vr::VREvent_t &e, double x, double y)
 {
 	switch (e.eventType) {
 	case vr::VREvent_MouseButtonDown:
-		l.pressed = pico4_panel_hit(x, y);
+		l.pressed = pico4_panel_hit(x, y, l.warning);
 		l.pressed_at = now_s();
 		l.stored = false;
-		if (l.pressed == PICO4_PANEL_SLIDER) {
-			l.target = pico4_panel_slider_mm(x);
+		if (l.pressed == PICO4_PANEL_SLIDER && l.mm > 0) {
+			l.drag_from = l.target > 0 ? l.target : l.mm;
 		}
-		return true;
+		[[fallthrough]];
 	case vr::VREvent_MouseMove:
-		if (l.pressed == PICO4_PANEL_SLIDER) {
-			l.target = pico4_panel_slider_mm(x);
+		// The knob stops at 62 mm, with the warning, as long as its box is not ticked.
+		if (l.pressed == PICO4_PANEL_SLIDER && l.drag_from > 0) {
+			bool refused;
+			l.target = pico4_panel_gate(l.drag_from, pico4_panel_slider_mm(x), l.confirmed, &refused);
+			l.warning = pico4_panel_warning_after(l.warning, refused, l.target);
 			return true;
 		}
-		return false;
+		return e.eventType == vr::VREvent_MouseButtonDown;
 	case vr::VREvent_MouseButtonUp: {
 		const double from = l.target > 0 ? l.target : l.mm;
 		const int was = l.pressed;
 		const bool stored = l.stored;
 		l.pressed = PICO4_PANEL_NONE;
 		l.stored = false;
+		if (was == PICO4_PANEL_WARNING && pico4_panel_hit(x, y, l.warning) == PICO4_PANEL_WARNING) {
+			l.confirmed = !l.confirmed;
+			return true;
+		}
+		if (was == PICO4_PANEL_SLIDER) {
+			const double start = l.drag_from;
+			l.drag_from = 0;
+			if (start > 0 && fabs(l.target - start) >= 0.01) {
+				start_move(l, l.target);
+			}
+			return true;
+		}
 		if (from <= 0) {
 			return true;
 		}
 		if (was == PICO4_PANEL_MINUS) {
-			start_move(l, pico4_panel_clamp(from - PICO4_PANEL_STEP_MM));
+			request_move(l, from, from - PICO4_PANEL_STEP_MM);
 		} else if (was == PICO4_PANEL_PLUS) {
-			start_move(l, pico4_panel_clamp(from + PICO4_PANEL_STEP_MM));
-		} else if (was == PICO4_PANEL_SLIDER) {
-			start_move(l, l.target);
+			request_move(l, from, from + PICO4_PANEL_STEP_MM);
 		} else if (was >= PICO4_PANEL_PRESET0 && was < PICO4_PANEL_PRESET0 + PICO4_PANEL_PRESETS && !stored &&
 		           l.presets[was] > 0) {
-			start_move(l, l.presets[was]);
+			request_move(l, from, l.presets[was]);
 		}
 		return true;
 	}
@@ -452,6 +494,14 @@ render(const char *dir, const char *language)
 	s.lens.presets[1] = 64.0;
 	draw_tab(tab, s, t);
 	save(tab, "settings-lenses");
+	s.lens.mm = 62.0;
+	s.lens.warning = true;
+	draw_tab(tab, s, t);
+	save(tab, "settings-lenses-close");
+	s.lens.confirmed = true;
+	s.lens.mm = 60.5;
+	draw_tab(tab, s, t);
+	save(tab, "settings-lenses-close-ticked");
 	s.page = PICO4_SETTINGS_CONTROLLERS;
 	s.ctl.known = true;
 	s.ctl.left = true;
@@ -628,6 +678,11 @@ main(int argc, char **argv)
 			}
 		}
 		const bool visible = overlay->IsOverlayVisible(tab);
+		// Leaving the page clears the warning's box, as PICO OS does when its panel closes.
+		if ((!visible || s.page != PICO4_SETTINGS_LENSES) && (l.warning || l.confirmed)) {
+			l.warning = l.confirmed = false;
+			tab_dirty = true;
+		}
 
 		// The lenses: a held preset stores the distance, a finished move, the driver's distance.
 		if (l.pressed >= PICO4_PANEL_PRESET0 && l.pressed < PICO4_PANEL_PRESET0 + PICO4_PANEL_PRESETS && !l.stored &&

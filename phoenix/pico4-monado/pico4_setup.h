@@ -278,6 +278,19 @@ pico4_setup_hit_ipd(double x, double y)
 	return x >= PICO4_SETUP_IPD_MORE_X && x < PICO4_SETUP_IPD_MORE_X + PICO4_SETUP_IPD_W ? 1 : 0;
 }
 
+// The warning below 62 mm under the buttons, in place of the range's line while it shows: its box.
+#define PICO4_SETUP_WARNING_X 180.0
+#define PICO4_SETUP_WARNING_Y 362.0
+#define PICO4_SETUP_WARNING_W 640.0
+#define PICO4_SETUP_WARNING_H 70.0
+
+static inline bool
+pico4_setup_hit_warning(double x, double y)
+{
+	return x >= PICO4_SETUP_WARNING_X && x < PICO4_SETUP_WARNING_X + PICO4_SETUP_WARNING_W && y >= PICO4_SETUP_WARNING_Y &&
+	       y < PICO4_SETUP_WARNING_Y + PICO4_SETUP_WARNING_H;
+}
+
 /*!
  * The Steam client's interface language in its `registry.vdf` (@p vdf): the first `"language"`
  * value, into @p out; false when it has none (before the client's first start).
@@ -330,10 +343,28 @@ pico4_setup_list_turn(int page, int delta, int count)
 
 // -- The lens distance --------------------------------------------------------------------------------
 
-//! The lens distance's range and step in 0.01 mm: the PICO 4's specified 62-72 mm, PICO OS's 0.5 mm.
-#define PICO4_SETUP_IPD_MIN 6200
+/*
+ * The lens distance's range and step in 0.01 mm, PICO OS's: 58-72 mm in 0.5 mm, closer than 62 only once
+ * the warning's box is ticked (as pico4_lens_panel.h).
+ */
+#define PICO4_SETUP_IPD_MIN 5800
+#define PICO4_SETUP_IPD_CLOSE 6200
 #define PICO4_SETUP_IPD_MAX 7200
 #define PICO4_SETUP_IPD_STEP 50
+
+/*!
+ * A move from @p from to @p ipd (0.01 mm), closer than 62 mm only when @p confirmed: as pico4_panel_gate,
+ * one closer that would end below 62 stops at 62 or stays, and *@p refused says so.
+ */
+static inline int
+pico4_setup_ipd_gate(int from, int ipd, bool confirmed, bool *refused)
+{
+	*refused = !confirmed && ipd < PICO4_SETUP_IPD_CLOSE && ipd < from;
+	if (!*refused) {
+		return ipd;
+	}
+	return from > PICO4_SETUP_IPD_CLOSE ? PICO4_SETUP_IPD_CLOSE : from;
+}
 
 //! @p ipd (0.01 mm) moved by @p steps, on the 0.5 mm grid, within the range.
 static inline int
