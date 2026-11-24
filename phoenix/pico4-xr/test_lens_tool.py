@@ -47,7 +47,9 @@ class FrameTests(unittest.TestCase):
         self.assertEqual(lens.frame(lens.MOVE, 6350).hex(), "a00700ce1871")
 
     def test_nothing_else_can_be_built(self):
-        for position in (6199, 7201, 5800, 0, 63.5, None):
+        # PICO OS's range: 58 to 72 mm.
+        self.assertEqual(lens.frame(lens.MOVE, 5800)[3:5], (5800).to_bytes(2, "little"))
+        for position in (5799, 7201, 5000, 0, 63.5, None):
             with self.assertRaises(ValueError):
                 lens.frame(lens.MOVE, position)
         for command in set(range(256)) - {lens.GET_POSITION, lens.GET_MOVE_STATE, lens.REPORT_ENABLE}:
@@ -101,6 +103,10 @@ class MoveTests(unittest.TestCase):
             lens.move(FakePort([0, 3], 6350), 6350, sleep=lambda _: None)
         with self.assertRaises(RuntimeError):
             lens.move(FakePort([0, 0], 6500), 6350, sleep=lambda _: None)
+
+    def test_the_near_end_stop_is_where_the_lenses_stopped(self):
+        # 58.00 mm asked, the motor stopped by itself at 59.62 mm (state 2): a finished move.
+        self.assertEqual(lens.move(FakePort([0, 1, 1, lens.NEAR_END], 5962), 5800, sleep=lambda _: None), 5962)
 
     def test_a_move_that_never_stops_times_out(self):
         clock = iter(range(0, 1000, 10))

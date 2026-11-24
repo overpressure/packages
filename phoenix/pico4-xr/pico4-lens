@@ -26,9 +26,11 @@ DEVICE = "/dev/ttyHS1"
 REQUEST, REPLY = 0xA0, 0x79
 GET_POSITION, GET_MOVE_STATE, MOVE, REPORT_ENABLE = 0x08, 0x11, 0x07, 0x22
 MOVING = 1
-# 0.01 mm: the PICO 4's specified range. Below it PICO OS asks to accept the risk of the lenses
-# pressing on the nose, and the motor stops by itself at 59.4-59.9 mm.
-MIN_POSITION, MAX_POSITION = 6200, 7200
+#: The move state at the near end: the motor stopped by itself, at 59.4-59.9 mm.
+NEAR_END = 2
+# 0.01 mm: PICO OS's range, 58 to 72 mm. Its settings take closer than 62 only once the wearer accepts
+# the risk of the lenses pressing on the nose (the panels ask; this tool is the service's level).
+MIN_POSITION, MAX_POSITION = 5800, 7200
 TOLERANCE = 30  # 0.01 mm between the target and where a finished move ended
 LOCK_TIMEOUT, REPLY_TIMEOUT, MOVE_TIMEOUT = 1.0, 0.2, 15.0
 #: Reply lengths: 79 a_lo a_hi b_lo b_hi xor for the position, 79 state xor for the move state.
@@ -161,6 +163,9 @@ def move(
             msg = "the lenses did not stop"
             raise TimeoutError(msg)
     end = position(port)
+    # A target past the near end stop ends there: a finished move, where the lenses stopped.
+    if state == NEAR_END:
+        return end
     if state != 0 or abs(end - target) > TOLERANCE:
         msg = f"move ended in state {state} at {end / 100:.2f} mm"
         raise RuntimeError(msg)
