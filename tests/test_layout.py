@@ -23,6 +23,11 @@ def lines(path: Path) -> list[str]:
     return [s for s in (raw.split("#", 1)[0].strip() for raw in path.read_text(encoding="utf-8").splitlines()) if s]
 
 
+def definitions() -> list[Path]:
+    """Return the headsets' image definitions; a headset's folder that holds only .gitkeep has none yet."""
+    return sorted(h for h in HEADSETS.iterdir() if {p.name for p in h.iterdir()} != {".gitkeep"})
+
+
 def layers(headset: str) -> list[str]:
     """Return a headset's layers, the most general first."""
     return lines(HEADSETS / headset / "layers")
@@ -82,7 +87,7 @@ def toml_list(text: str, key: str) -> list[str]:
 
 class Layers(unittest.TestCase):
     def test_every_layer_belongs_to_a_headset(self) -> None:
-        used = {layer for headset in HEADSETS.iterdir() for layer in layers(headset.name)}
+        used = {layer for headset in definitions() for layer in layers(headset.name)}
         folders = {p.parent.parent.name for p in ROOT.glob("*/*/PKGBUILD")}
         self.assertEqual(folders - used, set())
         for layer in used:
@@ -94,7 +99,7 @@ class Layers(unittest.TestCase):
                 self.assertTrue(folder.name.startswith(prefix), folder)
 
     def test_every_headset_names_its_layers_in_pacman_conf(self) -> None:
-        for headset in HEADSETS.iterdir():
+        for headset in definitions():
             conf = (headset / "pacman.conf").read_text(encoding="utf-8")
             sections = re.findall(r"^\[([^\]]+)\]", conf, re.MULTILINE)
             ours = [s for s in sections if s.startswith("overpressure-")]
@@ -108,8 +113,16 @@ class Layers(unittest.TestCase):
 
 
 class Definitions(unittest.TestCase):
+    def test_a_headset_without_packages_yet_holds_only_gitkeep(self) -> None:
+        # Its folders exist before its first packages (the layer and headsets/<codename>/), each with a .gitkeep;
+        # anything more there makes it a definition or a layer that the other tests check.
+        for folder in [*HEADSETS.iterdir(), *(p for p in ROOT.iterdir() if (p / ".gitkeep").exists())]:
+            names = {p.name for p in folder.iterdir()}
+            if ".gitkeep" in names:
+                self.assertEqual(names, {".gitkeep"}, f"{folder.name}: drop the .gitkeep with the first files")
+
     def test_packages_come_from_the_headsets_layers(self) -> None:
-        for headset in HEADSETS.iterdir():
+        for headset in definitions():
             available = {f"overpressure-{layer}/{p.name}" for layer in layers(headset.name) for p in recipes(layer)}
             text = (headset / "packages.txt").read_text(encoding="utf-8").splitlines()
             ours = [raw for raw in text if raw.startswith("overpressure-")]
@@ -125,7 +138,7 @@ class Definitions(unittest.TestCase):
             self.assertEqual(available - listed, set(), f"{headset.name}: recipes no image installs")
 
     def test_lock_lines(self) -> None:
-        for headset in HEADSETS.iterdir():
+        for headset in definitions():
             for raw in (headset / "packages.lock").read_text(encoding="utf-8").splitlines():
                 self.assertRegex(raw, r"^[0-9a-f]{64}  \S+\.pkg\.tar\.zst$")
 

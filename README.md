@@ -13,7 +13,8 @@ image, so that an image's build downloads them instead of compiling them.
 | `common/` | packages for Valve's Frame userspace on any headset: GTK 2, MangoHud, gamescope, PipeWire's ALSA plugin, libdisplay-info 0.1 | `overpressure-*` |
 | `sm8250/` | packages for the Snapdragon XR2 (SM8250): hexagonrpc, the DSPs' file server | `sm8250-*` |
 | `phoenix/` | packages for the PICO 4: Monado with the PICO 4's driver and its tools, Basalt with the PICO 4's settings, `pico4-slamd` (the default head tracker: the host for PICO OS's libSlam on the CDSP), the compositor's swapchain layer, Steam Link's controller shim, the graphics test, and the system around Valve's userspace with its tests: `pico4-base` (preinit, storage and recovery policy, USB link, network), `pico4-power` (fan, battery guard, power key), `pico4-audio`, `pico4-xr` (DSPs, IMU, station, lenses, cameras), `pico4-session` (Valve's session and SteamVR's settings), `pico4-checks` (the acceptance checks); each one's preset enables its units | `pico4-*` |
-| `headsets/<codename>/` | a headset's image definition: `layers`, `pacman.conf`, `packages.txt`, `packages.lock` | |
+| `hollywood/` | packages for the Meta Quest 2 ([overpressure/hollywood](https://github.com/overpressure/hollywood)): none yet, the folder holds a `.gitkeep` until its first packages | |
+| `headsets/<codename>/` | a headset's image definition: `layers`, `pacman.conf`, `packages.txt`, `packages.lock`; `headsets/hollywood/` holds a `.gitkeep` until its first packages | |
 | `build/packages.sh`, `build/plan.py`, `build/notes.py`, `build/versions.py` | the build of a headset's packages; the jobs and cache keys CI builds them with; a release's notes; a release's name and the check that changed recipes raise their version | |
 | `tests/` | the checks of the layout, of the build plan, of the release notes, of the versions and of pico4-monado's texts | |
 
