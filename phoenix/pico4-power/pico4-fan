@@ -58,7 +58,7 @@ DEVICE = "/dev/ttyHS1"
 THERMAL = Path("/sys/class/thermal")
 STATE = Path("/run/pico4-fan/state.json")
 # The headset's serial number, whose batch ("early" or "late") picks PICO OS's table: persist,
-# mounted read-only at boot (pico4-persist.service). Only the batch word leaves this file.
+# mounted read-only at boot (sm8250-persist.service). Only the batch word leaves this file.
 SERIAL_FILE = Path("/mnt/vendor/persist/falcon/sn")
 #: PICO OS's early table on every headset (see the module docstring); auto follows the batch.
 DEFAULT_PROFILE = "early"

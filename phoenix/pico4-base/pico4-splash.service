@@ -4,11 +4,11 @@
 [Unit]
 Description=Boot indication in the lenses
 DefaultDependencies=no
-ConditionKernelCommandLine=pico4.root=installed
+ConditionKernelCommandLine=overpressure.root=installed
 ConditionKernelCommandLine=!androidboot.mode=charger
 # msm's panels have
 # their mode once pico4-panel-probe has run.
-After=pico4-storage-ro.service pico4-panel-probe.service
+After=overpressure-storage-ro.service pico4-panel-probe.service
 Conflicts=shutdown.target
 Before=shutdown.target
 

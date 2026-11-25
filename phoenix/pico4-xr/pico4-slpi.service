@@ -7,7 +7,7 @@ After= systemd-udev-trigger.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/libexec/pico4/remoteproc-boot slpi
+ExecStart=/usr/libexec/sm8250/remoteproc-boot slpi
 
 [Install]
 WantedBy=pico4-sensors.target

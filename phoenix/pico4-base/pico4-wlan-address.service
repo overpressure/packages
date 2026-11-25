@@ -2,7 +2,7 @@
 # interface.
 [Unit]
 Description=Wi-Fi address from persist
-After=pico4-persist.service sys-subsystem-net-devices-wlan0.device
+After=sm8250-persist.service sys-subsystem-net-devices-wlan0.device
 BindsTo=sys-subsystem-net-devices-wlan0.device
 Before=NetworkManager.service
 ConditionPathExists=/mnt/vendor/persist/wlan_mac.bin

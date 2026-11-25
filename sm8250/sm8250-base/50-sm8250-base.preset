@@ -1,0 +1,5 @@
+# The units sm8250-base starts with the system.
+enable steam-video-codec-setup.service
+enable sm8250-persist.service
+enable sm8250-venus-probe.service
+enable sm8250-wlan-probe.service

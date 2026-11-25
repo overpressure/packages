@@ -1,0 +1,14 @@
+[Unit]
+Description=Recovery deadline (return to fastboot when unreachable or a test overruns)
+DefaultDependencies=no
+After=systemd-journald.socket
+# Must survive emergency/rescue isolation and shutdown requests that hang.
+IgnoreOnIsolate=yes
+
+[Service]
+ExecStart=/usr/libexec/overpressure/recovery-watch
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=sysinit.target

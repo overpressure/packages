@@ -3,9 +3,9 @@
 # Compact samples of the USB link after boot, written through log() (kernel log,
 # boot.log and pstore pmsg). pmsg survives a warm reboot, so the maintenance stage 1
 # still has them when the system's network was unusable.
-. /usr/libexec/pico4/lib.sh
+. /usr/libexec/overpressure/lib.sh
 IFACE=""
-. /run/pico4/usb-link.env 2>/dev/null
+. /run/overpressure/usb-link.env 2>/dev/null
 n=/sys/class/net/$IFACE
 # pmsg is small (a few KiB): three samples.
 for t in 20 60 150; do

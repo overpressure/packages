@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""The system's policy files: core dump limit, memory, watchdog, SSH and Wi-Fi."""
+"""The PICO 4's policy files: charger mode, core dump limit, memory and Wi-Fi."""
 
 from __future__ import annotations
 
@@ -55,32 +55,6 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(sysctl["vm.watermark_scale_factor"], "90")
         self.assertEqual(sysctl["vm.watermark_boost_factor"], "0")
         self.assertEqual(sysctl["vm.overcommit_memory"], "1")
-
-
-class WatchdogTests(unittest.TestCase):
-    def test_systemd_arms_the_hardware_watchdog(self):
-        # qcom_wdt takes at most 30 s; systemd pings at half of it.
-        self.assertEqual(ini("system.conf.d-50-pico4.conf")["Manager"]["RuntimeWatchdogSec"], "30s")
-
-
-class SshAccessTests(unittest.TestCase):
-    """Keys only, on USB and Wi-Fi (docs/security.md), and no key in the package."""
-
-    def test_sshd_takes_keys_only(self):
-        sshd = {key: value for key, value in settings("sshd_config.d-50-pico4.conf").items() if key != "HostKey"}
-        self.assertEqual(sshd["PermitRootLogin"], "prohibit-password")
-        self.assertEqual(sshd["PermitEmptyPasswords"], "no")
-        self.assertEqual(sshd["PasswordAuthentication"], "no")
-        self.assertEqual(sshd["KbdInteractiveAuthentication"], "no")
-        self.assertEqual(sshd["AuthenticationMethods"], "publickey")
-
-    def test_no_key_in_the_package(self):
-        names = [
-            p.name
-            for p in HERE.iterdir()
-            if p.name in ("authorized_keys", "id_ed25519", "id_rsa") or p.name.startswith("ssh_host_")
-        ]
-        self.assertEqual(names, [])
 
 
 class WifiTests(unittest.TestCase):

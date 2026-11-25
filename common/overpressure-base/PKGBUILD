@@ -1,0 +1,108 @@
+# The installed system's share of overpressure's headset runtime (overpressure's docs/runtime.md), on any headset:
+# preinit (the first process: storage policy, boot count, data partition, the headset's hooks), the read-only
+# storage policy and the recovery deadline, the USB link to the PC (gadget, network, the PC as a last-resort
+# gateway), steamos-readonly for an ext4 image, emergency and rescue back to the bootloader, and the system's
+# generic policy files. Its programs source the runtime's lib.sh, and the recovery deadline runs the runtime's
+# recovery-watch: the image build installs both from overpressure, as the maintenance system has them, with the
+# headset's values in /etc/overpressure/headset. The preset enables the services; the tests run in the build.
+pkgname=overpressure-base
+pkgver=2026.11.25
+pkgrel=1
+pkgdesc="overpressure's installed system: preinit, storage and recovery policy, USB link"
+arch=(any)
+url="https://github.com/overpressure/overpressure/blob/main/docs/runtime.md"
+license=(Unlicense)
+depends=(bash python systemd)
+backup=(etc/NetworkManager/conf.d/50-overpressure-usb.conf
+        etc/ssh/sshd_config.d/50-overpressure.conf
+        etc/systemd/system/home.mount
+        etc/fonts/conf.d/67-overpressure-language-fonts.conf)
+source=(50-overpressure-usb.conf
+        sshd_config.d-50-overpressure.conf
+        home.mount
+        journald.conf.d-50-overpressure.conf
+        50-overpressure-usb.network
+        system.conf.d-50-overpressure.conf
+        emergency.service.d-overpressure.conf
+        rescue.service.d-overpressure.conf
+        overpressure-boot-ok.service
+        overpressure-recovery-watch.service
+        overpressure-storage-ro.service
+        overpressure-usb-link.service
+        overpressure-usb-internet.service
+        overpressure-usb-link.conf
+        00-overpressure-devnodes.rules
+        boot-attempts
+        devnode
+        fail-to-fastboot
+        preinit
+        steamos-readonly
+        usb-link
+        usb-internet
+        test_config.py test_usb_internet.py
+        test_boot_attempts.sh test_steamos_readonly.sh
+        50-overpressure-base.preset
+        67-overpressure-language-fonts.conf)
+sha256sums=('952324c99b08f87f6d318258eb24915ed4f18a4f9fa219e756bbca70d5bd8396'
+            '227246238bcba53b5610fde79395119e0915aefeba8d6184b5c6e59efdeb01d8'
+            'e490417b57d6b3bd5f59ddaeda87ba02ea1d38032c90678032cdfd471f0d5452'
+            'b0359f811740d2e07850235b55c97471e5becccc8a9b821d8ef1549f1f158d77'
+            '9d8d36cdb9440ff030f299ebf6fe2e75819fdd8ab34dbc4141085ca76878152a'
+            'b88863bf876026f1156c79ec2293a0303219e364de6a09a7f71aa40efe5daced'
+            '0f7944c6bf409a4936ebffdbc53f863ead8e887163c5bf0563701f5caba69572'
+            '67c8c5e985b1ceafbc0d82d57194e2e1a1e77694ce8bb6a999722193e123fe17'
+            'add8c63779df0705464cfdb1c67408832ed3c1d90e606a64a766a624aef5b29a'
+            'aec9e734a0ad0c6e0868e4829df379c8d8da1aeffdda462e9b4c97faaab3e863'
+            'd9369f75abd567516db8d6fc326c35aaa9483d5ee5891adb2142e4d5f56253e7'
+            '99dfe5a1785b5f383981838468dc130c36b232f10ad443288edee0c9f83a4710'
+            '5ff527397bbb07a0a4da5719bca1d9a82ea5d9ebd3a755fe5c515769c5ee6d4e'
+            'f4ad7c1a2ab67bbb196ae2a40455c08acb6c3175c75585be8dfc3586a08215fd'
+            '348149c0868968b67aaaae4089e11aa57ae8f5cdd5825fbb4f0348f19cde6100'
+            '2ea57f94d019d06749806ff684dc2bd698331d692664ab0d7200842be6ddf7d0'
+            '6811c9bfb572354dab5520b165ff141c6de699d2b89a355632d6501068ec4ef9'
+            'c6106dcb00d038fc5d7a927723444788549b87c424a365efd6af0ddff1d8c68c'
+            '6b58f411cea35505189113efddba778f07ea3de5ad5546c35f3ce881b034beb6'
+            '42e864cce089ddec10704c74a404d4713e9b1371284e88e29c8a396f43e0bf42'
+            '7e2e20deeb0a824f77178be78dd3b52ba3b0eea92723b634279adc2c5e0d38b7'
+            '3daf42f9b44dfcf6d4ae65018d633198503fa9071596c443a188fe37ec379d78'
+            'fdca84ee896078af81ecf5f91b7f5863ea95e8c92001e353a928aebf2f8861a9'
+            'f5f3580f84c53379b59a4de7aa206ba88975a439939a4b8eded66bd5dcced147'
+            '7983dff5891f654806fdf7b0ac36683df4b13d8ae291e439c3a90ee5abb5ab4e'
+            'b45bf0dbde89f82a75cd782acce1773f1e2b7d2b0322d66be50c71782dac0eea'
+            '64a12dac4612f7020db4a355b0ed54618f5c80fa3a84f2607054b9f152fff01f'
+            '6875447f1422c4567a5fefbd2d525d0c55d0617d067ffe6e4f8b40a07506843f')
+
+build() {
+  python3 -B -m unittest test_config test_usb_internet
+  bash test_boot_attempts.sh
+  bash test_steamos_readonly.sh
+}
+
+package() {
+  install -Dm644 50-overpressure-usb.conf "$pkgdir/etc/NetworkManager/conf.d/50-overpressure-usb.conf"
+  install -Dm644 sshd_config.d-50-overpressure.conf "$pkgdir/etc/ssh/sshd_config.d/50-overpressure.conf"
+  # The CJK face of the text's language, and Noto Sans Arabic, where fontconfig's generic
+  # families would otherwise take the Japanese and Urdu faces.
+  install -Dm644 67-overpressure-language-fonts.conf "$pkgdir/etc/fonts/conf.d/67-overpressure-language-fonts.conf"
+  install -Dm644 home.mount "$pkgdir/etc/systemd/system/home.mount"
+  install -Dm644 journald.conf.d-50-overpressure.conf "$pkgdir/usr/lib/systemd/journald.conf.d/50-overpressure.conf"
+  install -Dm644 50-overpressure-usb.network "$pkgdir/usr/lib/systemd/network/50-overpressure-usb.network"
+  install -Dm644 system.conf.d-50-overpressure.conf "$pkgdir/usr/lib/systemd/system.conf.d/50-overpressure.conf"
+  install -Dm644 emergency.service.d-overpressure.conf "$pkgdir/usr/lib/systemd/system/emergency.service.d/overpressure.conf"
+  install -Dm644 rescue.service.d-overpressure.conf "$pkgdir/usr/lib/systemd/system/rescue.service.d/overpressure.conf"
+  local unit
+  for unit in boot-ok recovery-watch storage-ro usb-link usb-internet; do
+    install -Dm644 "overpressure-$unit.service" "$pkgdir/usr/lib/systemd/system/overpressure-$unit.service"
+  done
+  install -Dm644 overpressure-usb-link.conf "$pkgdir/usr/lib/tmpfiles.d/overpressure-usb-link.conf"
+  install -Dm644 00-overpressure-devnodes.rules "$pkgdir/usr/lib/udev/rules.d/00-overpressure-devnodes.rules"
+  local program
+  for program in boot-attempts devnode fail-to-fastboot preinit usb-link usb-internet; do
+    install -Dm755 "$program" "$pkgdir/usr/libexec/overpressure/$program"
+  done
+  # Valve's /usr/bin/steamos-readonly handles btrfs only: the image build links it to this one.
+  install -Dm755 steamos-readonly "$pkgdir/usr/libexec/overpressure/steamos-readonly"
+  # The headset's preinit hooks (preinit's header).
+  install -dm755 "$pkgdir/usr/lib/overpressure/preinit/early.d" "$pkgdir/usr/lib/overpressure/preinit/mounted.d"
+  install -Dm644 50-overpressure-base.preset -t "$pkgdir/usr/lib/systemd/system-preset"
+}

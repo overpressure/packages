@@ -8,10 +8,10 @@ target-version = "py39"
 # The Python programs without an extension, which ruff does not find by itself: every tracked file whose
 # shebang runs Python (tests/test_layout.py checks that each one is listed, here and for ty).
 extend-include = [
+    "common/overpressure-base/usb-internet",
     "phoenix/pico4-audio/micmute",
     "phoenix/pico4-audio/pico4-audiocal",
     "phoenix/pico4-base/bt-address",
-    "phoenix/pico4-base/usb-internet",
     "phoenix/pico4-checks/msm-frame-stats",
     "phoenix/pico4-checks/pico4-support-bundle",
     "phoenix/pico4-checks/pico4-suspend-check",
@@ -78,10 +78,10 @@ include = [
     "common",
     "sm8250",
     "phoenix",
+    "common/overpressure-base/usb-internet",
     "phoenix/pico4-audio/micmute",
     "phoenix/pico4-audio/pico4-audiocal",
     "phoenix/pico4-base/bt-address",
-    "phoenix/pico4-base/usb-internet",
     "phoenix/pico4-checks/msm-frame-stats",
     "phoenix/pico4-checks/pico4-support-bundle",
     "phoenix/pico4-checks/pico4-suspend-check",

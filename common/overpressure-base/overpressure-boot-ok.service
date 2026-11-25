@@ -1,0 +1,12 @@
+# The graphical target was reached: the boot counts as finished, and preinit's count of unfinished
+# boots starts again (overpressure's docs/runtime.md, "Boot attempts").
+[Unit]
+Description=Boot finished: clear the count of unfinished boots
+After=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/overpressure/boot-attempts finished
+
+[Install]
+WantedBy=graphical.target
