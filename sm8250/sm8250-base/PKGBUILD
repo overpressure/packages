@@ -1,0 +1,42 @@
+# The Snapdragon XR2's (SM8250's) system parts around Valve's userspace: the DSPs started through remoteproc
+# with their crash recovery on, the stock system's persist partition read-only, and the probes of the Wi-Fi
+# chip (QCA6390) and the video codec (Venus) once the image's /usr/lib/firmware holds their firmware. Its
+# programs source overpressure's runtime library (overpressure-base). The preset enables the services.
+pkgname=sm8250-base
+pkgver=2026.11.25
+pkgrel=1
+pkgdesc="SM8250 system: DSP start, persist partition, Wi-Fi and video codec probes"
+arch=(any)
+url="https://github.com/overpressure/packages/tree/main/sm8250"
+license=(Unlicense)
+depends=(bash systemd)
+source=(remoteproc-boot
+        persist
+        wlan-probe
+        venus-probe
+        sm8250-persist.service
+        sm8250-wlan-probe.service
+        sm8250-venus-probe.service
+        sm8250-venus.conf
+        50-sm8250-base.preset)
+sha256sums=('1494021167c68ed3e4107e700955767db4a1e01446349b35b620ee644c0cc28c'
+            '306f55c2efd72a8261082083f87346f432e7053d8705fa2727d50194adbd46a0'
+            '84692c27a189755daa38356564fdfa899c2b4493ef3acb09d237951348a77690'
+            'faaaf18ef62a93850400c3d6cfcde10fa14ca8fb910a41300e8e7f7a43d6f194'
+            '3264555a2edea523e1a10f8e429c485385ab47844ccb1d3f380e1928a14acd71'
+            '8b43055903d5777a57296b6c7ff624eb8cb5e0809d33874abc2eb980ef1695c6'
+            'ea1816d865a662ee905b3763fb9f06478ac182af9d1907e65c017429dd8d238e'
+            'b2a2f3a45a7ec17dd79b34c11f2ba7a923995d88d27a6d00d4268c727cde7d02'
+            '275d9df622fe3608ba3ad3b907e3baf82fdfcdc29965be25daf6eff4bb36efc4')
+
+package() {
+  local program unit
+  for program in remoteproc-boot persist wlan-probe venus-probe; do
+    install -Dm755 "$program" "$pkgdir/usr/libexec/sm8250/$program"
+  done
+  for unit in persist wlan-probe venus-probe; do
+    install -Dm644 "sm8250-$unit.service" "$pkgdir/usr/lib/systemd/system/sm8250-$unit.service"
+  done
+  install -Dm644 sm8250-venus.conf "$pkgdir/usr/lib/systemd/system/steam-video-codec-setup.service.d/sm8250-venus.conf"
+  install -Dm644 50-sm8250-base.preset -t "$pkgdir/usr/lib/systemd/system-preset"
+}

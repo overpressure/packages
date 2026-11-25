@@ -1,0 +1,17 @@
+# The stock system's persist partition read-only at /mnt/vendor/persist (a headset's docs/userspace.md): the
+# headset's own factory data, which the sensor DSP, the driver, the tracker, the fan and Wi-Fi
+# read through links in the image. Before local-fs.target, so every service finds it.
+[Unit]
+Description=Persist partition (read-only)
+DefaultDependencies=no
+After=overpressure-storage-ro.service
+Before=local-fs.target
+ConditionPathExists=/dev/block/by-name/persist
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/sm8250/persist
+
+[Install]
+WantedBy=local-fs.target

@@ -4,7 +4,7 @@
 # interface, before bluetoothd starts.
 [Unit]
 Description=Bluetooth address from persist
-After=pico4-persist.service sys-subsystem-bluetooth-devices-hci0.device
+After=sm8250-persist.service sys-subsystem-bluetooth-devices-hci0.device
 Wants=sys-subsystem-bluetooth-devices-hci0.device
 Before=bluetooth.service
 ConditionPathExists=/mnt/vendor/persist/pico_bt_mac

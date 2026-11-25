@@ -16,7 +16,7 @@ from typing import TypedDict
 
 #: Who may listen beyond loopback, by process name, and on what. None: any port.
 EXPECTED = {
-    "sshd": {("tcp", 22)},  # keys only (sshd_config.d/50-pico4.conf)
+    "sshd": {("tcp", 22)},  # keys only (sshd_config.d/50-overpressure.conf)
     "systemd-network": {("udp", 67), ("udp", 68), ("udp", 546)},  # the USB link's DHCP, the client's
     "NetworkManager": {("udp", 68), ("udp", 546)},  # the Wi-Fi's DHCP client
     "systemd-resolve": {("tcp", 5355), ("udp", 5355), ("udp", 5353)},  # name resolution

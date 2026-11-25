@@ -3,7 +3,7 @@
 # the power key, a short press to suspend and a 2 s hold to power off (powerkey, with logind leaving
 # the key alone). The preset enables the three services; the tests run in the build.
 pkgname=pico4-power
-pkgver=2026.11.22
+pkgver=2026.11.25
 pkgrel=1
 pkgdesc="PICO 4 fan control, battery guard and power key, as on PICO OS"
 arch=(any)
@@ -15,7 +15,7 @@ source=(pico4-fan pico4-fan.service
         powerkey pico4-powerkey.service 50-pico4-power-key.conf
         50-pico4-power.preset
         test_fan.py test_battery_guard.py test_power_key.py)
-sha256sums=('57253a1c54a768097b72466f2b330d98a4efa7b6aeed2b087484670fa37738d2'
+sha256sums=('6872e1f676719082d78ed17d9f9d16618a73412722c7b6f1bba4cb0c5acfea59'
             '2d337cfee38033e97eafbbe0fa9a27b445b32b91c1f59b77d1f0358c6dfbcc93'
             '9956f154529309f757d0501dcb5387c735b046dff87539b7bb15a216c51c3a9f'
             'a2533cfaec6db8847244dc641eeef5fbc11b962be8cc52ba3c86950868003f13'

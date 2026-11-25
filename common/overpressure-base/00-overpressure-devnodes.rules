@@ -1,0 +1,10 @@
+# overpressure's storage policy: every physical disk and partition is switched read-only
+# when it appears and gets a /dev/block/by-name link. These rules run first, so that no other rule
+# sees a writable disk.
+
+SUBSYSTEM!="block", GOTO="overpressure_devnodes_end"
+ACTION=="remove", ENV{DEVNAME}=="?*", RUN+="/usr/libexec/overpressure/devnode remove"
+ACTION=="remove", GOTO="overpressure_devnodes_end"
+ENV{DEVNAME}=="?*", ENV{MAJOR}=="?*", PROGRAM="/usr/libexec/overpressure/devnode add"
+LABEL="overpressure_devnodes_end"
+

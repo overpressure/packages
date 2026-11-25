@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# The controllers' gyro bias tables (pvr/<serial>.txt on persist, which sm8250-persist.service mounts
+# read-only) are root's alone there; SteamVR's driver runs as the session's user and reads a copy.
+set -eu
+mkdir -p /run/pico4-controllers
+for table in /mnt/vendor/persist/pvr/?????????????????.txt; do
+	[ -f "$table" ] && install -m 644 "$table" /run/pico4-controllers/
+done
+exit 0

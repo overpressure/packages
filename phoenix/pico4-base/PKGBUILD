@@ -1,211 +1,112 @@
-# The PICO 4's system around Valve's userspace: preinit (the first process: boot count, data partition,
-# charger mode), the read-only storage policy and the recovery deadline, PICO OS's persist partition, the
-# USB link to the PC (gadget, network, the PC as a last-resort gateway), Wi-Fi and Bluetooth with their
-# addresses from persist, the wall clock, the firmware probes (Wi-Fi, video codec, panels), zram swap and the
-# system's policy files. preinit and charger mode source stage 1's lib.sh, which the image takes from stage 1.
-# The preset enables the services; the tests run in the build.
+# The PICO 4's system around Valve's userspace, on overpressure-base and sm8250-base: preinit's PICO 4 hooks
+# (charger mode; PICO OS's firmware partitions, the head tracker's root and the boot splash), charger mode,
+# Wi-Fi and Bluetooth with their addresses from persist, the controllers' bias tables from persist, the wall
+# clock, the panel probe, zram swap and the PICO 4's policy files. The preset enables the services; the tests
+# run in the build.
 pkgname=pico4-base
-pkgver=2026.11.24
+pkgver=2026.11.25
 pkgrel=1
-pkgdesc="PICO 4 system: preinit, storage and recovery policy, USB link, network, clock, firmware probes"
+pkgdesc="PICO 4 system: preinit hooks, charger mode, Wi-Fi and Bluetooth addresses, clock, panel probe"
 arch=(any)
 url="https://github.com/overpressure/phoenix/tree/main/docs"
 license=(Unlicense)
 depends=(bash python systemd)
-backup=(etc/NetworkManager/conf.d/50-pico4-usb.conf
-        etc/NetworkManager/conf.d/50-pico4-wifi-address.conf
+backup=(etc/NetworkManager/conf.d/50-pico4-wifi-address.conf
         etc/NetworkManager/conf.d/50-pico4-wifi-autoconnect.conf
         etc/iwd/main.conf
-        etc/ssh/sshd_config.d/50-pico4.conf
         etc/sysctl.d/50-pico4-console.conf
         etc/sysctl.d/50-pico4-memory.conf
-        etc/systemd/coredump.conf.d/50-pico4-limit.conf
-        etc/systemd/system/home.mount
-        etc/fonts/conf.d/67-pico4-language-fonts.conf)
-source=(50-pico4-usb.conf
-        50-pico4-wifi-address.conf
+        etc/systemd/coredump.conf.d/50-pico4-limit.conf)
+source=(50-pico4-wifi-address.conf
         50-pico4-wifi-autoconnect.conf
         main.conf
-        sshd_config.d-50-pico4.conf
         50-pico4-console.conf
         50-pico4-memory.conf
         50-pico4-zram.conf
         50-pico4-limit.conf
-        home.mount
-        journald.conf.d-50-pico4.conf
         10-pico4-wlan.link
-        50-pico4-usb.network
-        system.conf.d-50-pico4.conf
-        emergency.service.d-pico4.conf
-        rescue.service.d-pico4.conf
-        pico4-venus.conf
-        pico4-boot-ok.service
         pico4-bt-address.service
         pico4-bt-firmware.service
         pico4-charger.service
         pico4-charger.target
         pico4-clock.service
         pico4-panel-probe.service
-        pico4-persist.service
-        pico4-recovery-watch.service
         pico4-splash.service
-        pico4-storage-ro.service
-        pico4-usb-gadget.service
-        pico4-usb-internet.service
-        pico4-venus-probe.service
         pico4-wlan-address.service
-        pico4-wlan-probe.service
         pico4-zram-swap.service
-        pico4-usb-gadget.conf
-        00-pico4-devnodes.rules
-        boot-attempts
+        sm8250-persist.service.d-50-pico4-controllers.conf
+        preinit-early.sh
+        preinit-mounted.sh
         bt-address
         bt-firmware
         charger
         clock
-        devnode
-        fail-to-fastboot
-        persist
-        preinit
-        remoteproc-boot
-        steamos-readonly
-        usb-gadget
-        usb-internet
-        venus-probe
+        controller-tables
         wlan-address
-        wlan-probe
         vrdevice_path
-        test_clock.py test_config.py test_qca6390.py test_usb_internet.py
-        test_boot_attempts.sh test_charger.sh test_steamos_readonly.sh
-        50-pico4-base.preset
-        67-pico4-language-fonts.conf)
-sha256sums=('d18499e0f76dbe5a67f228a005665353eb18c1ae07ff230dbe84e7ab3b0891a1'
-            'a4671220f5b6aa835752b9d43439895ab33fec8cb4ef6604b7675a447ebeee70'
+        test_clock.py test_config.py test_qca6390.py
+        test_charger.sh
+        50-pico4-base.preset)
+sha256sums=('a4671220f5b6aa835752b9d43439895ab33fec8cb4ef6604b7675a447ebeee70'
             '7824a2b49644845d9ec8328d8a274069d83b302c2408a12d4624515aefa5077a'
             '7fbbc7e4ceca60160db6e03851e1f8984b456d6c8d3d3d1d073d428d15d9bc95'
-            '6bd3a42f445a9acf0cc449e75d5032e2c639d518718a89a6dfc251c29031d309'
-            'f02cc9aea7e6622e6081b8e9db6a30e6514a45c3b536c265fa271d2e01fc15eb'
+            'b55c33e9d11caea990a9ba2f6817a650b7be1d5c3de4b54787eb3865c3f16831'
             '335e235d1c7ec9aaf434e07e5b9e8415077cb4c99088ee43765f58abc2d369dc'
             'f37bebf116496cac778724b1270030c500559c54e7b828daff7b28cb4da8ac8a'
             '571cbb4039945f1abb736e9b6ca275fc92cb55e68186a1666b2c38172973d596'
-            '7b265b64a346746da295130bbe0f99b618e3673ac88f397418832391cace2d8e'
-            'b0359f811740d2e07850235b55c97471e5becccc8a9b821d8ef1549f1f158d77'
             '4f3aa7563c3160df060a8e9cbdbf1f5e8997e339e0fe4cd6c9c16004a28f1ac8'
-            '27f6a21ae6844e141a176e1669c9acbf2cdebdd1b103818ec5b9de9115581eaf'
-            '49820933574bba0af74ef85c0f2d3124fba5e7c8c34a10bcb795d63ea06dd511'
-            '92cbdfa36586bf8f223962f6f46bea4659808e29c80ba521790edd21e6643db8'
-            '0b6158a8b39b1ad5330d3ea3ca7360aed4f67d1f344c9cf92c4c1e98276d0735'
-            '0b69edd53f0d9e8cb907e6d06323b50b91d30c2f7f66b4935a58bd6848db62f5'
-            'c37d59e7956d0d393847285855167d5a62ada4e83d3b867232653c5b0bd28c27'
-            '55e8972b77936c8499644a542c699c2ceb8fe9cc5d3585798d2cc92a6c9554e9'
+            '211e4fef65f029df2692012ec458e7af83228c38bff7ac966ea2256014aa9ea4'
             'ff30a2144d045e7176d7da9ddd4cee759141dcfec60d61e9b547bef73f0f3d86'
             'e6385aadd2349b0f290bb1cf409c724a333ceecc53d153ef798701ddd9bbeed1'
-            '04129856899eedf4b744d0d7c0116759a28ef5d56c72ede4d4ac8e5b47550d9f'
-            'b83eed7a69a0df58c5c064d63778c8b7a54ee1c91c00c6877466737cc9588068'
+            '62247e0d50a752c0e11a0c0534732f5f9acbee6f766a555ca53cac925e75b7aa'
+            'f2789dbf9dac166502c7b3794fdfc53a28958fb66f4cabe683e67107acba78be'
             'c1d8a9c8361af00c522e9f6edb410c795f2a984b38d45c71e9a4119a856c1c21'
-            'bd2811cb342774644d9a2af69f3c3bd98f21ac4f530f36cb93b54ab9b9803861'
-            '13f63b62bf8b3e7756eae5ec34f7ac9cc92893f78b76c4d58a621744d6f14748'
-            'e8ae0633652b80fbf59447f60909d068a2c1c3bdee7ac9d165be845c35868599'
-            'fcc9c8e239b587072023ba6bf8d13d07af94a7345281a6472065709681cdbf3a'
-            '60d894ae81e9e0d9b3f808d4ee97c845df8fa3da5b0d871678d00bdb6da024f6'
-            'a50220202a4c46e78d7e85f09b31c67ccae205879a42c49a01f5e1ae4cf16ee4'
-            '86009df87cdae1fa4e1c14237ea08fbcb126f71d168c697471286c41e553fa4b'
-            'b04d41408c13b708e767363fe6f4d80495e04b54941ffa8fa71630e55b782af2'
-            'd912af06c04ce754c6d954d7199e1de81406dcc69c8b3eece35d9f1c292f5e70'
+            '23da47842fe6b3a1ec7457f0a7ddd5c0c3f92aa2ff9e001e9cc4565ecc684b55'
+            '66b833cf8ae18a61fcf6b01070daf9b7b5518a9044bb3ac47bb4411cebec7ec9'
             '945d7cf3c1ab04e8593929a33590f76c84661d0fdbc5c5b030ca5ba2146fc46c'
-            'a0606dd4c152bf731ea8458b55bada9a7ff8d33b17cf56163621d3db948f26f0'
-            '94505847d8d5c58335685c477ec6b49dc53d4d0ceedaa865610f6f43ce1afb4b'
-            '8a72e8d0375f04ee2d77e084d68dec3671e60fb55fff3f53b082061a27f400ba'
+            '13a95abbfe73427d2f0d0a5e139f55254f8ca46cf67f144e73b2b38d39902f1b'
+            '36174723207605a1ee4b48b92b1e58e9d35950314b1629017f0ba9f1378a9578'
+            '6c9e7d15eaf9f48aeb6c6bfd2107c2960cd14b0a53f2b4f3e569f5f31fe7409b'
             '6aa5a39edf0c61554068b9009f1739f77302f00acfa2b464b4ca2e1c4fa337b1'
             '73df2eef1c75bac824d957997a34b7ff60cbf452fb232654b5e99e5fb537055b'
-            '19d8a3e7288431a3abed80992365e51c00ea2ceeb25f6f26d9a24df50de394ea'
+            '2545e5662e2ee55e5eafa1135feab47586ff9e21807cca492322ae49f59d16a1'
             'ebbbd0c3cc36a5eaf78c9f1cafa73526bb59d8959863933c904bbeb9da0eaff4'
-            'a510583c8740b3c464036cb27db2603392a273ae34f8aad4bd0b07390d710009'
-            'e595217122c5d1d7c1fe2d2102728704659e3ebf9f9bbad044925741d3c95dd6'
-            '95a1344e4d74defeae8d67e504368ab433aceea7fb645a997f7dba57cd4cffe2'
-            '9f1a227ffefe6dda0dbb566122319773859b775d963cb196ac7632a3a702812b'
-            'e70848b47705026cd480904c0b00f9eb28edba124f4c1583f835233cef902176'
-            'cf06040d21a75707b0ce84cd5f800fa426ead4494250cb8de7d0f1a5502b066e'
-            'aef6ca675b62fc2662158ead16df9ee2163c6cdd045ead0dd17bf6d40e08dcfa'
-            '07d2a70365730acc970ac204a84f7c2cf14602aa0945998a494073d2e92839f3'
-            '0057f3ea6532929b95100669859e6c6a86c247fa8e6306c4aa1df91eb12ed8fa'
+            'e71e1027affabf6b8a425d9961a2eede4cb677c7b11b2e8c145450d05e0493c9'
             'c2b47f379380857cd47df25225bbba90268f6aaea75e6b97add802913c1be322'
-            '9f67cd7728c262fdbea23fa91b4c3ae1607b19e2be5dbed6920c63dd4527ae6e'
             'e1b7bf74abc4b10665eb3ccdd83ab43d050a432e834d870be9faef0fa3fe9152'
             '55878f20ae9a671b8097681faa9001f81701e8095b72dd2f582e9c9f924d11ae'
-            '2718eeca7f256d7f5af3b368f2ba7c3115791797e9560633cd5343e99c549933'
+            '41c7e01d2f0936915598b2844642e2c0b3ccdeace606fffba1cd368f8d7d63d7'
             '2b1d293a8b30e06617ac87ac16e2ab82b5d09a4f7fc4c4e7c7c86f193ee35474'
-            'efc4c843f5335d5ed72f87585cd0edfa98107957496380580d5b77792ac5e60a'
-            '773d6276040a1d5625d1e53aaaccf7ecd380e877454f657c8e293e98fb4ad905'
-            '51df9a5f288c1d04cc1de4973ba0a51f1745fab5af4c44f1eee6a1791dfc00af'
-            'a74dd6e7487fa7c16f6fc995f3ee0a9ec321fceac9f4649d2664b5ba95850201'
-            'fc5ed844a4a3b0e698c18331532f6686c6e766467b623890c82a7ef71fbbc0e0'
-            '6875447f1422c4567a5fefbd2d525d0c55d0617d067ffe6e4f8b40a07506843f')
+            'ae94fd605c024946c86508864e15dfcebf04a0d14008913fe4f17c15ecce8e59'
+            'e144487e69f248d0aea93f1b90b0fa5f7e81069effd565760900f2cf4cce9d6e')
 
 build() {
-  python3 -B -m unittest test_clock test_config test_qca6390 test_usb_internet
-  bash test_boot_attempts.sh
+  python3 -B -m unittest test_clock test_config test_qca6390
   bash test_charger.sh
-  bash test_steamos_readonly.sh
 }
 
 package() {
-  install -Dm644 50-pico4-usb.conf "$pkgdir/etc/NetworkManager/conf.d/50-pico4-usb.conf"
   install -Dm644 50-pico4-wifi-address.conf "$pkgdir/etc/NetworkManager/conf.d/50-pico4-wifi-address.conf"
   install -Dm644 50-pico4-wifi-autoconnect.conf "$pkgdir/etc/NetworkManager/conf.d/50-pico4-wifi-autoconnect.conf"
   install -Dm644 main.conf "$pkgdir/etc/iwd/main.conf"
-  install -Dm644 sshd_config.d-50-pico4.conf "$pkgdir/etc/ssh/sshd_config.d/50-pico4.conf"
   install -Dm644 50-pico4-console.conf "$pkgdir/etc/sysctl.d/50-pico4-console.conf"
   install -Dm644 50-pico4-memory.conf "$pkgdir/etc/sysctl.d/50-pico4-memory.conf"
   install -Dm644 50-pico4-zram.conf "$pkgdir/usr/lib/systemd/zram-generator.conf.d/50-pico4.conf"
   install -Dm644 50-pico4-limit.conf "$pkgdir/etc/systemd/coredump.conf.d/50-pico4-limit.conf"
-  # The CJK face of the text's language, and Noto Sans Arabic, where fontconfig's generic
-  # families would otherwise take the Japanese and Urdu faces.
-  install -Dm644 67-pico4-language-fonts.conf "$pkgdir/etc/fonts/conf.d/67-pico4-language-fonts.conf"
-  install -Dm644 home.mount "$pkgdir/etc/systemd/system/home.mount"
-  install -Dm644 journald.conf.d-50-pico4.conf "$pkgdir/usr/lib/systemd/journald.conf.d/50-pico4.conf"
   install -Dm644 10-pico4-wlan.link "$pkgdir/usr/lib/systemd/network/10-pico4-wlan.link"
-  install -Dm644 50-pico4-usb.network "$pkgdir/usr/lib/systemd/network/50-pico4-usb.network"
-  install -Dm644 system.conf.d-50-pico4.conf "$pkgdir/usr/lib/systemd/system.conf.d/50-pico4.conf"
-  install -Dm644 emergency.service.d-pico4.conf "$pkgdir/usr/lib/systemd/system/emergency.service.d/pico4.conf"
-  install -Dm644 rescue.service.d-pico4.conf "$pkgdir/usr/lib/systemd/system/rescue.service.d/pico4.conf"
-  install -Dm644 pico4-venus.conf "$pkgdir/usr/lib/systemd/system/steam-video-codec-setup.service.d/pico4-venus.conf"
-  install -Dm644 pico4-boot-ok.service "$pkgdir/usr/lib/systemd/system/pico4-boot-ok.service"
-  install -Dm644 pico4-bt-address.service "$pkgdir/usr/lib/systemd/system/pico4-bt-address.service"
-  install -Dm644 pico4-bt-firmware.service "$pkgdir/usr/lib/systemd/system/pico4-bt-firmware.service"
-  install -Dm644 pico4-charger.service "$pkgdir/usr/lib/systemd/system/pico4-charger.service"
+  local unit
+  for unit in bt-address bt-firmware charger clock panel-probe splash wlan-address zram-swap; do
+    install -Dm644 "pico4-$unit.service" "$pkgdir/usr/lib/systemd/system/pico4-$unit.service"
+  done
   install -Dm644 pico4-charger.target "$pkgdir/usr/lib/systemd/system/pico4-charger.target"
-  install -Dm644 pico4-clock.service "$pkgdir/usr/lib/systemd/system/pico4-clock.service"
-  install -Dm644 pico4-panel-probe.service "$pkgdir/usr/lib/systemd/system/pico4-panel-probe.service"
-  install -Dm644 pico4-persist.service "$pkgdir/usr/lib/systemd/system/pico4-persist.service"
-  install -Dm644 pico4-recovery-watch.service "$pkgdir/usr/lib/systemd/system/pico4-recovery-watch.service"
-  install -Dm644 pico4-splash.service "$pkgdir/usr/lib/systemd/system/pico4-splash.service"
-  install -Dm644 pico4-storage-ro.service "$pkgdir/usr/lib/systemd/system/pico4-storage-ro.service"
-  install -Dm644 pico4-usb-gadget.service "$pkgdir/usr/lib/systemd/system/pico4-usb-gadget.service"
-  install -Dm644 pico4-usb-internet.service "$pkgdir/usr/lib/systemd/system/pico4-usb-internet.service"
-  install -Dm644 pico4-venus-probe.service "$pkgdir/usr/lib/systemd/system/pico4-venus-probe.service"
-  install -Dm644 pico4-wlan-address.service "$pkgdir/usr/lib/systemd/system/pico4-wlan-address.service"
-  install -Dm644 pico4-wlan-probe.service "$pkgdir/usr/lib/systemd/system/pico4-wlan-probe.service"
-  install -Dm644 pico4-zram-swap.service "$pkgdir/usr/lib/systemd/system/pico4-zram-swap.service"
-  install -Dm644 pico4-usb-gadget.conf "$pkgdir/usr/lib/tmpfiles.d/pico4-usb-gadget.conf"
-  install -Dm644 00-pico4-devnodes.rules "$pkgdir/usr/lib/udev/rules.d/00-pico4-devnodes.rules"
-  install -Dm755 boot-attempts "$pkgdir/usr/libexec/pico4/boot-attempts"
-  install -Dm755 bt-address "$pkgdir/usr/libexec/pico4/bt-address"
-  install -Dm755 bt-firmware "$pkgdir/usr/libexec/pico4/bt-firmware"
-  install -Dm755 charger "$pkgdir/usr/libexec/pico4/charger"
-  install -Dm755 clock "$pkgdir/usr/libexec/pico4/clock"
-  install -Dm755 devnode "$pkgdir/usr/libexec/pico4/devnode"
-  install -Dm755 fail-to-fastboot "$pkgdir/usr/libexec/pico4/fail-to-fastboot"
-  install -Dm755 persist "$pkgdir/usr/libexec/pico4/persist"
-  install -Dm755 preinit "$pkgdir/usr/libexec/pico4/preinit"
-  install -Dm755 remoteproc-boot "$pkgdir/usr/libexec/pico4/remoteproc-boot"
-  # Valve's /usr/bin/steamos-readonly handles btrfs only: the image build links it to this one.
-  install -Dm755 steamos-readonly "$pkgdir/usr/libexec/pico4/steamos-readonly"
-  install -Dm755 usb-gadget "$pkgdir/usr/libexec/pico4/usb-gadget"
-  install -Dm755 usb-internet "$pkgdir/usr/libexec/pico4/usb-internet"
-  install -Dm755 venus-probe "$pkgdir/usr/libexec/pico4/venus-probe"
-  install -Dm755 wlan-address "$pkgdir/usr/libexec/pico4/wlan-address"
-  install -Dm755 wlan-probe "$pkgdir/usr/libexec/pico4/wlan-probe"
+  install -Dm644 sm8250-persist.service.d-50-pico4-controllers.conf \
+    "$pkgdir/usr/lib/systemd/system/sm8250-persist.service.d/50-pico4-controllers.conf"
+  install -Dm644 preinit-early.sh "$pkgdir/usr/lib/overpressure/preinit/early.d/50-pico4.sh"
+  install -Dm644 preinit-mounted.sh "$pkgdir/usr/lib/overpressure/preinit/mounted.d/50-pico4.sh"
+  local program
+  for program in bt-address bt-firmware charger clock controller-tables wlan-address; do
+    install -Dm755 "$program" "$pkgdir/usr/libexec/pico4/$program"
+  done
   install -Dm755 vrdevice_path "$pkgdir/usr/local/bin/vrdevice_path"
   install -Dm644 50-pico4-base.preset -t "$pkgdir/usr/lib/systemd/system-preset"
 }

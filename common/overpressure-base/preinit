@@ -1,0 +1,132 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# The installed system's first process (overpressure's docs/runtime.md). Valve's kernel mounts the system image
+# from super read-only as the root (root=PARTLABEL=super ro init=/usr/libexec/overpressure/preinit) and starts
+# this script. It applies the storage policy, lays the data partition onto the image and executes systemd. When
+# that fails it reboots into recovery, where the headset's maintenance system starts.
+#
+# The data partition (userdata, ext4 labelled $OP_DATA_LABEL) holds what changes: /etc's changes (an overlay),
+# /var, /home and /root. On the first boot they start as the image has them. pacman's database is the image's
+# own (/usr/lib/holo/pacmandb), as on SteamOS.
+#
+# The headset's hooks are bash fragments, sourced in name order (they can call log and fail):
+#   /usr/lib/overpressure/preinit/early.d/*.sh    before the storage policy; one may set OP_BOOT_UNIT, the
+#                                                 systemd unit to start instead of the default target (a
+#                                                 charger mode, which neither counts as a boot nor clears one)
+#   /usr/lib/overpressure/preinit/mounted.d/*.sh  with the data partition, /etc, /var, /home and /root in place,
+#                                                 just before systemd
+export PATH=/usr/bin
+umask 022
+# A failed exec of systemd returns here instead of ending PID 1 (a panic).
+shopt -s execfail
+exec </dev/null >/dev/kmsg 2>&1
+
+mount -t proc -o nosuid,nodev,noexec proc /proc
+mount -t sysfs -o nosuid,nodev,noexec sysfs /sys
+mount -t tmpfs -o nosuid,nodev,mode=0755 tmpfs /run
+. /usr/libexec/overpressure/lib.sh
+mkdir -p "$OP_RUN"
+echo on > /proc/sys/kernel/printk_devkmsg 2>/dev/null
+
+# A one-shot test image in recovery (overpressure.failover=reboot) reboots plainly instead: a reboot into
+# recovery would start it again.
+fail() {
+	sync
+	if [ "$(stage1_arg failover recovery)" = reboot ]; then
+		log "preinit: $*; rebooting"
+		exec "$OP_REBOOT"
+	fi
+	log "preinit: $*; rebooting into recovery"
+	exec "$OP_REBOOT" recovery
+}
+
+# hooks STAGE: source the headset's fragments for STAGE.
+hooks() {
+	local hook
+	for hook in "/usr/lib/overpressure/preinit/$1.d/"*.sh; do
+		[ -f "$hook" ] || continue
+		# shellcheck source=/dev/null
+		. "$hook"
+	done
+}
+
+log "preinit: system image on $(findmnt -no SOURCE /), $(uname -r)"
+OP_BOOT_UNIT=""
+hooks early
+
+# Valve's kernel starts with the performance governor; schedutil, as stock systems run (overpressure.cpugov=keep
+# leaves it). The session's own units change single policies later.
+gov=$(stage1_arg cpugov schedutil)
+if [ "$gov" != keep ]; then
+	for p in /sys/devices/system/cpu/cpufreq/policy*; do
+		grep -qw "$gov" "$p/scaling_available_governors" 2>/dev/null && echo "$gov" > "$p/scaling_governor"
+	done
+	log "preinit: cpufreq governor $gov"
+fi
+
+# Every disk and partition read-only as it is (the data partition is the one exception).
+/usr/libexec/overpressure/devnode sweep
+# steamos-readonly disable made the system writable until enable or the next upgrade, whose fresh image has
+# no /.overpressure-writable: the sweep left super writable, and the root is mounted so too.
+if [ -e /.overpressure-writable ]; then
+	if mount -o remount,rw /; then
+		log "preinit: the system is writable (steamos-readonly disable)"
+	else
+		log "preinit: the system stays read-only: remounting it writable failed"
+	fi
+fi
+data=$(readlink -f "/dev/block/by-name/$OP_DATA_PART" 2>/dev/null)
+[ -b "$data" ] || fail "no $OP_DATA_PART partition"
+[ "$(ext_label "$data" 2>/dev/null)" = "$OP_DATA_LABEL" ] || fail "$OP_DATA_PART holds no $OP_DATA_LABEL file system"
+# A mainline kernel counts a disk's read-only flag for its partitions too, so the data partition's
+# disk becomes writable as well; its other partitions keep their own flags.
+blockdev --setrw "$data" || fail "could not make $OP_DATA_PART writable"
+if [ "$(cat "/sys/class/block/${data##*/}/ro")" != 0 ]; then
+	disk=$(readlink -f "/sys/class/block/${data##*/}/..")
+	blockdev --setrw "/dev/${disk##*/}" || fail "could not make ${disk##*/} writable"
+fi
+mount -t ext4 -o noatime "$data" /data || fail "mounting the data partition failed"
+
+# Boots that started systemd but never reached the graphical target (a panic, a hang the watchdog
+# ended) are counted; overpressure-boot-ok.service clears the count there. After two, this boot goes to
+# the maintenance system instead. A boot into OP_BOOT_UNIT neither counts nor clears.
+if [ -z "$OP_BOOT_UNIT" ]; then
+	attempts=$(/usr/libexec/overpressure/boot-attempts start)
+	rc=$?
+	[ $rc = 3 ] && fail "$attempts"
+	[ $rc = 0 ] || log "preinit: counting the boot failed ($rc)"
+	[ -z "$attempts" ] || log "preinit: $attempts"
+fi
+
+if [ ! -e "/data/$OP_DATA_MARKER" ]; then
+	log "preinit: first boot of the installed system: data from the image"
+	for dir in var root home; do
+		mkdir -p "/data/$dir"
+		cp -a -n "/$dir/." "/data/$dir/" || fail "copying /$dir"
+	done
+	mkdir -p /data/etc/upper /data/etc/work
+	touch "/data/$OP_DATA_MARKER"
+fi
+# Systems before kept a copy of pacman's database here, which describes another image.
+if [ -e /data/var/lib/pacman ]; then
+	log "preinit: removing the copy of pacman's database on the data partition (it is the image's)"
+	rm -rf /data/var/lib/pacman || fail "removing the old copy of pacman's database"
+fi
+# Without the inodes index: an update replaces the lower /etc whole, and with the index (a
+# mainline kernel's default) the upper directory stays tied to the image it was made with
+# ("failed to verify upper root origin").
+mount -t overlay overlay -o "lowerdir=/etc,upperdir=/data/etc/upper,workdir=/data/etc/work,index=off" /etc ||
+	fail "mounting the /etc overlay failed"
+for dir in var root home; do
+	mount --bind "/data/$dir" "/$dir" || fail "mounting /$dir"
+done
+# Stable per headset, so journals of different boots belong together.
+device_serial | md5sum | cut -c1-32 > /etc/machine-id
+
+hooks mounted
+
+log "preinit: data $(df -k /data | awk 'NR==2 {print int($3/1048576)}') of" \
+	"$(df -k /data | awk 'NR==2 {print int($2/1048576)}') GiB used; executing systemd${OP_BOOT_UNIT:+ into $OP_BOOT_UNIT}"
+# shellcheck disable=SC2093 # execfail: a failed exec returns, and fail reboots
+exec /usr/lib/systemd/systemd ${OP_BOOT_UNIT:+--unit=$OP_BOOT_UNIT}
+fail "systemd did not start"

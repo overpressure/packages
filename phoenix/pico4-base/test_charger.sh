@@ -8,7 +8,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 # A stand-in for stage 1's lib.sh, which the image takes from stage 1: its log and run folder.
 mkdir "$work/lib" "$work/run"
-printf 'log() { :; }\nP4_RUN=%s/run\n' "$work" > "$work/lib/lib.sh"
+printf 'log() { :; }\nOP_RUN=%s/run\n' "$work" > "$work/lib/lib.sh"
 CHARGER_LIB=1 CHARGER_LIBDIR=$work/lib . "$here/charger"
 
 # struct input_event on aarch64: 16 bytes of time, type, code (16 bit each), value (32 bit).

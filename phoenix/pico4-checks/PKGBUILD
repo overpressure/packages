@@ -3,8 +3,8 @@
 # reads), the suspend check, the support bundle and the link's samples after
 # boot. The preset enables the link samples; the tests run in the build.
 pkgname=pico4-checks
-pkgver=2026.11.23
-pkgrel=2
+pkgver=2026.11.25
+pkgrel=1
 pkgdesc="PICO 4 checks: the system's and the VR session's acceptance checks, the support bundle"
 arch=(any)
 url="https://github.com/overpressure/phoenix/tree/main/docs"
@@ -25,12 +25,12 @@ source=(pico4-support-bundle
         test_suspend_check.py)
 sha256sums=('83c000aeb2f6834844c79b5dbac32b76f866f0431461bf89b92415eaff29f8b6'
             '49ee620087f9d92b65a98a664850338b4ff875821c849017a186e74da316fdcf'
-            'e029bf8f60b7978bfc920e4c39c84dbaf3bf95e4995f5bb0a1c0fcab1579e0f7'
+            '7bb63df6e58ba47415348d4640042044597ac70c7b648c6696e9304e1a608e1d'
             'ad8b81ada874a1121e0a07d5d225af84ef0b57adbd63d17c632ecfd126915a48'
-            '217d4d3db717e8cdb576035d0624b1572ea02eb2152dfe04b26ce51e49ed73f7'
+            '84dfb3bc669b4791a13700f0131f693d1cbf9518951c53de59ab2969a2e0d3e6'
             'a48b847f2a7993d3b369f540746687760600ddf91ead6d0c0f3144856bed9492'
             '454156206a62fa0b7dea261238feb5e7350013382397891c680feb1ce7bf9ee0'
-            '6a200b04535d5b9eac356d120b8f46a8f7987fb87590a77609b041c2155cb93f'
+            '6e4f6fcd37d067aafd2fb16cbe2544cbfb16c18d762b8f0dba7c34689147762e'
             '43a502265d0d94d117b4e30bad443348238a904948334e3ad634e822d87ed63a'
             'f07de3d3b4df5f17c154ed24cbce1475b7abd7827222604c185a018920ab4d11'
             'f0eaf22820c981198a319c89b00967b91c8bd2e3a3b286cba7e4a10469db286a'

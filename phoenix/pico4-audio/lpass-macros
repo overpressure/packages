@@ -8,7 +8,7 @@
 # While a probe runs, the device already shows its driver: only an unbound macro is probed again.
 # PICO OS's calibration (q6calibration-pico4.c) has the same order: the ADSP maps its buffer only
 # once the audio process runs, so with the card up it is probed again too.
-. /usr/libexec/pico4/lib.sh
+. /usr/libexec/overpressure/lib.sh
 set -u
 DEV=3370000.codec
 CARD=/proc/asound/PICO4

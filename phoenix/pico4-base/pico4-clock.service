@@ -3,7 +3,7 @@
 [Unit]
 Description=Wall clock from the RTC and PICO OS's offset
 DefaultDependencies=no
-After=pico4-persist.service
+After=sm8250-persist.service
 Wants=time-set.target
 Before=time-set.target systemd-timesyncd.service sysinit.target
 ConditionPathExists=/sys/class/rtc/rtc0/since_epoch

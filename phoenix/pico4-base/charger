@@ -10,7 +10,7 @@
 # battery when it starts and on a press of the power key, the lenses show the battery's level for
 # SHOW_SECONDS then (pico4-splash --battery), and stay dark otherwise.
 # Sourced with CHARGER_LIB=1, it only defines its functions (test_charger.sh).
-. "${CHARGER_LIBDIR:-/usr/libexec/pico4}/lib.sh"
+. "${CHARGER_LIBDIR:-/usr/libexec/overpressure}/lib.sh"
 
 POWER_ON_HOLD=2
 UNPLUGGED_OFF=10
@@ -70,16 +70,16 @@ watch_key() {
 		press)
 			show_battery
 			press=$((press + 1))
-			echo "$press" > "$P4_RUN/charger-press"
+			echo "$press" > "$OP_RUN/charger-press"
 			(
 				sleep "$POWER_ON_HOLD"
-				[ "$(cat "$P4_RUN/charger-press" 2>/dev/null)" = "$press" ] || exit 0
+				[ "$(cat "$OP_RUN/charger-press" 2>/dev/null)" = "$press" ] || exit 0
 				log "charger mode: power key held ${POWER_ON_HOLD} s, starting the system"
 				sync
 				pico4-reboot
 			) &
 			;;
-		release) echo 0 > "$P4_RUN/charger-press" ;;
+		release) echo 0 > "$OP_RUN/charger-press" ;;
 		esac
 	done
 }

@@ -1,0 +1,10 @@
+# The units overpressure-base starts with the system.
+enable sshd.service
+enable systemd-networkd.service
+enable NetworkManager.service
+enable systemd-timesyncd.service
+enable overpressure-recovery-watch.service
+enable overpressure-storage-ro.service
+enable overpressure-usb-link.service
+enable overpressure-usb-internet.service
+enable overpressure-boot-ok.service

@@ -1,8 +1,8 @@
 [Unit]
 Description=PICO 4 USB link samples after boot (into pstore)
 DefaultDependencies=no
-# usb-gadget writes the link's interface into /run/pico4/usb-link.env, which this reads once.
-After=systemd-journald.service pico4-usb-gadget.service
+# usb-gadget writes the link's interface into /run/overpressure/usb-link.env, which this reads once.
+After=systemd-journald.service overpressure-usb-link.service
 
 [Service]
 Type=exec

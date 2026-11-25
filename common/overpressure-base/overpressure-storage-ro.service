@@ -1,0 +1,13 @@
+[Unit]
+Description=Storage policy (all physical block devices read-only)
+DefaultDependencies=no
+Before=local-fs-pre.target systemd-udev-trigger.service
+Wants=local-fs-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/overpressure/devnode sweep
+
+[Install]
+WantedBy=sysinit.target
